@@ -205,9 +205,7 @@ if __name__ == '__main__':
     My,
     Mz
     FROM BeamForces AS BF
-    JOIN BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber
-    WHERE GroupName LIKE "%PurlinTop%" 
-    OR GroupName LIKE "%PurlinBot%";"""
+    JOIN BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber;"""
 
     with open(output_fp, 'w+') as output_file:
         output_file.write("Id,BeamNumber,ResultCase,StationPoint,CrossSectionId,Steel Grade,L_cry [m],L_crz [m],L_crt [m],L_c [m],N_Ed [kN],V_yEd [kN],V_zEd [kN],M_yEd [kNm],M_zEd [kNm],M_TEd [kNm],National Annex\n")
