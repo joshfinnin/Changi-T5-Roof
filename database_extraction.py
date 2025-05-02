@@ -10,6 +10,7 @@ from sqlite3 import Connection, Cursor, connect
 import os
 import tkinter as tk
 from tkinter import filedialog
+from getpass import getuser
 
 # Import the St7API module
 import St7API as St7
@@ -180,13 +181,13 @@ def insert_beam_displacements(conn: Connection, cursor: Cursor, beam_results: li
 
 
 # Initialize Strand7 model
-def initialize_model(model_file: str, result_file: str):
+def initialize_model(model_file: str, result_file: str, scratch_path: str):
     uID = ctypes.c_int(1)  # Unique identifier for the model
     St7.St7Init()
     p_combo_count = ctypes.c_int(0)
     s_combo_count = ctypes.c_int(0)
     try:  # This try block is essential for avoiding getting stuck if the API call fails
-        St7.St7OpenFile(uID, model_file.encode('utf-8'), r'C:\Users\Josh.Finnin\Documents\Projects\Changi T5\Database Files'.encode())
+        St7.St7OpenFile(uID, model_file.encode('utf-8'), scratch_path.encode())
         print("Model opened.")
         St7.St7OpenResultFile(uID, result_file.encode(), None, St7.kUseExistingCombinations,
                               ctypes.byref(p_combo_count), ctypes.byref(s_combo_count))
@@ -235,8 +236,9 @@ def extract_nodal_reactions(conn: Connection, cursor: Cursor, uID, primary_combo
 
             nodal_results.append((result_id, node, result_case, case_name.value.decode(), fx, fy, fz, mx, my, mz))
 
-    # Insert the reactions into the SQLite database
-    insert_nodal_reactions(conn, cursor, nodal_results)
+        # Insert the reactions into the SQLite database
+        insert_nodal_reactions(conn, cursor, nodal_results)
+        nodal_results.clear()
     print("Nodal reactions written to DB.")
 
     # Having issues running into memory limits, so let's try deleting the nodal results after they are written to the DB
@@ -276,8 +278,9 @@ def extract_nodal_displacements(conn: Connection, cursor: Cursor, uID, primary_c
 
             nodal_results.append((result_id, node, result_case, case_name.value.decode(), dx, dy, dz, rx, ry, rz))
 
-    # Insert the reactions into the SQLite database
-    insert_nodal_displacements(conn, cursor, nodal_results)
+        # Insert the reactions into the SQLite database
+        insert_nodal_displacements(conn, cursor, nodal_results)
+        nodal_results.clear()
     print("Nodal displacements written to DB.")
 
     # Having issues running into memory limits, so let's try deleting the nodal results after they are written to the DB
@@ -381,10 +384,14 @@ def extract_beam_forces(conn: Connection, cursor: Cursor, uID, primary_combo_cou
     # The following ensures that the result positions are output as a ratio of the overall member length (0.0...1.0)
     St7.St7SetBeamResultPosMode(uID, St7.bpParam)
 
+    # The following setting (number of stations and positions) is hard-baked
+    # Can decouple from this function in the future, but haven't needed to so far.
     num_stations_requested = 5
+    position_values = [0.0, 0.25, 0.5, 0.75, 1.0]
 
-    # Shifted beam results outside the result case loop - transactions will occur once at the end rather than after
-    # every result case, which should enhance performance
+    # Shifted beam results outside the result case loop - SQL transaction will occur only once at the end
+    # rather than after every result case, which should enhance performance a bit.  May need to
+    # adjust this in the future though, as the batch sizes might get too big to hold in memory all at once.
     beam_results = []
 
     for result_case in range(1, primary_combo_count.value + secondary_combo_count.value + 1):
@@ -402,7 +409,6 @@ def extract_beam_forces(conn: Connection, cursor: Cursor, uID, primary_combo_cou
             forces = force_array()
 
             # Station positions along the element for querying loads
-            position_values = [0.0, 0.25, 0.5, 0.75, 1.0]
             position_values_c = [ctypes.c_double(p) for p in position_values]
             pos_array = ctypes.c_double * len(position_values_c)
             positions = pos_array(*position_values_c)
@@ -424,11 +430,12 @@ def extract_beam_forces(conn: Connection, cursor: Cursor, uID, primary_combo_cou
                 result = (sid, beam, result_case, case_name.value.decode(), float(position), fx, fy, fz, mx, my, mz)
                 beam_results.append(result)
 
-    # Insert the beam force results into the database
-    if len(beam_results) == 0:
-        print("Warning: Beam force result set is empty.")
-    else:
-        insert_beam_forces(conn, cursor, beam_results)
+        # Insert the beam force results into the database
+        if len(beam_results) == 0:
+            print("Warning: Beam force result set is empty.")
+        else:
+            insert_beam_forces(conn, cursor, beam_results)
+            beam_results.clear()
 
     print("Beam force results written to DB.")
 
@@ -488,17 +495,18 @@ def extract_beam_displacements(conn: Connection, cursor: Cursor, uID, primary_co
                 result = (sid, beam, result_case, case_name.value.decode(), float(position), dx, dy, dz, rx, ry, rz)
                 beam_results.append(result)
 
-    # Insert the beam force results into the database
-    if len(beam_results) == 0:
-        print("Warning: Beam displacement result set is empty.")
-    else:
-        insert_beam_displacements(conn, cursor, beam_results)
+        # Insert the beam force results into the database
+        if len(beam_results) == 0:
+            print("Warning: Beam displacement result set is empty.")
+        else:
+            insert_beam_displacements(conn, cursor, beam_results)
+            beam_results.clear()
 
     print("Beam displacement results written to DB.")
 
 
 # Main function for extracting results
-def extract_model_data(model_file: str, result_file: str, db_fp: str):
+def extract_model_data(model_file: str, result_file: str, db_fp: str, scratch_path: str):
 
     conn = connect(db_fp)
     cursor = conn.cursor()
@@ -507,7 +515,7 @@ def extract_model_data(model_file: str, result_file: str, db_fp: str):
     create_database(conn, cursor)
 
     # Initialize the Strand7 model
-    uID, primary_combo_count, secondary_combo_count = initialize_model(model_file, result_file)
+    uID, primary_combo_count, secondary_combo_count = initialize_model(model_file, result_file, scratch_path)
 
     if uID is None:
         pass
@@ -541,6 +549,21 @@ def extract_model_data(model_file: str, result_file: str, db_fp: str):
 
 
 if __name__ == '__main__':
+    # ----------------------------------------------------------------------
+    # USER NOTES
+    # 1. The Strand model must be analyzed and have results before running
+    # this script.
+    # 2. The model must be closed when running the script (can't be open in
+    # the background as the script will access it using the API).
+    # 3. If you have accidentally run the script while the model is open,
+    # make sure to delete the empty database file that it created before
+    # rerunning the script.
+    # ----------------------------------------------------------------------
+
+    # Create scratch path if not exists
+    scratch_folder = f"C:\\Users\\{getuser()}\\Documents\\Changi T5_Database_Scratch"
+    if not os.path.exists(scratch_folder):
+        os.mkdir(scratch_folder)
 
     root = tk.Tk()
     root.withdraw()
@@ -551,6 +574,6 @@ if __name__ == '__main__':
     result_name = os.path.splitext(os.path.split(result_file)[1])[0]
     db_fp = filedialog.asksaveasfilename(title="Save Database File As", defaultextension=".db")
 
-    extract_model_data(model_file, result_file, db_fp)
+    extract_model_data(model_file, result_file, db_fp, scratch_path=scratch_folder)
 
 
