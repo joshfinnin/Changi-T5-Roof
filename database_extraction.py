@@ -73,11 +73,12 @@ def create_database(conn: Connection, cursor: Cursor):
             N2 INTEGER,
             Length REAL,
             PropertyName TEXT,
-            GroupName TEXT
+            GroupName TEXT,
+            BeamIDNumber INTEGER
         )
     ''')
 
-    cursor.execute("""CREATE INDEX idx_beam_attributes_propertyname ON BeamProperties(PropertyName, GroupName);""")
+    cursor.execute("""CREATE INDEX idx_beam_attributes_propertyname ON BeamProperties(PropertyName, GroupName, BeamIDNumber);""")
 
     # Create table for element forces
     cursor.execute('''
@@ -154,8 +155,8 @@ def insert_nodal_coordinates(conn: Connection, cursor: Cursor, nodal_results: li
 # Function to insert element properties into the database
 def insert_beam_properties(conn: Connection, cursor: Cursor, beam_results: list):
 
-    insertion_query = """INSERT INTO BeamProperties (BeamNumber, N1, N2, Length, PropertyName, GroupName)
-    VALUES (?, ?, ?, ?, ?, ?)"""
+    insertion_query = """INSERT INTO BeamProperties (BeamNumber, N1, N2, Length, PropertyName, GroupName, BeamIDNumber)
+    VALUES (?, ?, ?, ?, ?, ?, ?)"""
     cursor.executemany(insertion_query, beam_results)
     conn.commit()
 
@@ -213,12 +214,14 @@ def extract_nodal_reactions(conn: Connection, cursor: Cursor, uID, primary_combo
     St7.St7GetNumLoadCase(uID, ctypes.byref(nLoadCases))
 
     nodal_results = []
-    for result_case in range(1, primary_combo_count.value + secondary_combo_count.value + 1):
+    number_of_cases = primary_combo_count.value + secondary_combo_count.value
+    for result_case in range(1, number_of_cases + 1):
 
         case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
         St7.St7GetResultCaseName(uID, result_case, case_name, St7.kMaxStrLen)
 
-        print(f"Extracting node reactions for load case {case_name.value.decode()}...")
+        case_name_string = case_name.value.decode()
+        print(f"Extracting node reactions for load case {case_name_string}...")
 
         for node in range(1, nNodes.value + 1):
 
@@ -234,11 +237,13 @@ def extract_nodal_reactions(conn: Connection, cursor: Cursor, uID, primary_combo
             my = reactions[4]
             mz = reactions[5]
 
-            nodal_results.append((result_id, node, result_case, case_name.value.decode(), fx, fy, fz, mx, my, mz))
+            nodal_results.append((result_id, node, result_case, case_name_string, fx, fy, fz, mx, my, mz))
 
         # Insert the reactions into the SQLite database
-        insert_nodal_reactions(conn, cursor, nodal_results)
-        nodal_results.clear()
+        # Implementing smarter batching
+        if result_case % 100 == 0 or result_case == number_of_cases:
+            insert_nodal_reactions(conn, cursor, nodal_results)
+            nodal_results.clear()
     print("Nodal reactions written to DB.")
 
     # Having issues running into memory limits, so let's try deleting the nodal results after they are written to the DB
@@ -256,7 +261,8 @@ def extract_nodal_displacements(conn: Connection, cursor: Cursor, uID, primary_c
     St7.St7GetNumLoadCase(uID, ctypes.byref(nLoadCases))
 
     nodal_results = []
-    for result_case in range(1, primary_combo_count.value + secondary_combo_count.value + 1):
+    number_of_cases = primary_combo_count.value + secondary_combo_count.value
+    for result_case in range(1, number_of_cases + 1):
 
         case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
         St7.St7GetResultCaseName(uID, result_case, case_name, St7.kMaxStrLen)
@@ -279,8 +285,10 @@ def extract_nodal_displacements(conn: Connection, cursor: Cursor, uID, primary_c
             nodal_results.append((result_id, node, result_case, case_name.value.decode(), dx, dy, dz, rx, ry, rz))
 
         # Insert the reactions into the SQLite database
-        insert_nodal_displacements(conn, cursor, nodal_results)
-        nodal_results.clear()
+        # Implementing smarter batching
+        if result_case % 100 == 0 or result_case == number_of_cases:
+            insert_nodal_displacements(conn, cursor, nodal_results)
+            nodal_results.clear()
     print("Nodal displacements written to DB.")
 
     # Having issues running into memory limits, so let's try deleting the nodal results after they are written to the DB
@@ -359,7 +367,7 @@ def extract_beam_properties(conn: Connection, cursor: Cursor, uID):
         node2 = connections[2]
         length = element_data_array[0]
 
-        result = (beam, node1, node2, length, property_name.value.decode(), group_name.value.decode())
+        result = (beam, node1, node2, length, property_name.value.decode(), group_name.value.decode(), id_number)
         beam_results.append(result)
 
     # Insert the beam force results into the database
@@ -393,8 +401,8 @@ def extract_beam_forces(conn: Connection, cursor: Cursor, uID, primary_combo_cou
     # rather than after every result case, which should enhance performance a bit.  May need to
     # adjust this in the future though, as the batch sizes might get too big to hold in memory all at once.
     beam_results = []
-
-    for result_case in range(1, primary_combo_count.value + secondary_combo_count.value + 1):
+    number_of_cases = primary_combo_count.value + secondary_combo_count.value
+    for result_case in range(1, number_of_cases + 1):
 
         case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
         St7.St7GetResultCaseName(uID, result_case, case_name, St7.kMaxStrLen)
@@ -434,8 +442,10 @@ def extract_beam_forces(conn: Connection, cursor: Cursor, uID, primary_combo_cou
         if len(beam_results) == 0:
             print("Warning: Beam force result set is empty.")
         else:
-            insert_beam_forces(conn, cursor, beam_results)
-            beam_results.clear()
+            # Implementing smarter batching
+            if result_case % 100 == 0 or result_case == number_of_cases:
+                insert_beam_forces(conn, cursor, beam_results)
+                beam_results.clear()
 
     print("Beam force results written to DB.")
 
@@ -457,8 +467,8 @@ def extract_beam_displacements(conn: Connection, cursor: Cursor, uID, primary_co
     # Shifted beam results outside the result case loop - transactions will occur once at the end rather than after
     # every result case, which should enhance performance
     beam_results = []
-
-    for result_case in range(1, primary_combo_count.value + secondary_combo_count.value + 1):
+    number_of_cases = primary_combo_count.value + secondary_combo_count.value
+    for result_case in range(1, number_of_cases + 1):
 
         case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
         St7.St7GetResultCaseName(uID, result_case, case_name, St7.kMaxStrLen)
@@ -495,12 +505,14 @@ def extract_beam_displacements(conn: Connection, cursor: Cursor, uID, primary_co
                 result = (sid, beam, result_case, case_name.value.decode(), float(position), dx, dy, dz, rx, ry, rz)
                 beam_results.append(result)
 
-        # Insert the beam force results into the database
+        # Insert the beam dispalcement results into the database
         if len(beam_results) == 0:
             print("Warning: Beam displacement result set is empty.")
         else:
-            insert_beam_displacements(conn, cursor, beam_results)
-            beam_results.clear()
+            # Implementing smarter batching
+            if result_case % 100 == 0 or result_case == number_of_cases:
+                insert_beam_displacements(conn, cursor, beam_results)
+                beam_results.clear()
 
     print("Beam displacement results written to DB.")
 
@@ -508,44 +520,43 @@ def extract_beam_displacements(conn: Connection, cursor: Cursor, uID, primary_co
 # Main function for extracting results
 def extract_model_data(model_file: str, result_file: str, db_fp: str, scratch_path: str):
 
-    conn = connect(db_fp)
-    cursor = conn.cursor()
+    with connect(db_fp) as conn:
 
-    # Ensure the database is ready
-    create_database(conn, cursor)
+        cursor = conn.cursor()
 
-    # Initialize the Strand7 model
-    uID, primary_combo_count, secondary_combo_count = initialize_model(model_file, result_file, scratch_path)
+        # Ensure the database is ready
+        create_database(conn, cursor)
 
-    if uID is None:
-        pass
+        # Initialize the Strand7 model
+        uID, primary_combo_count, secondary_combo_count = initialize_model(model_file, result_file, scratch_path)
 
-    else:
+        if uID is None:
+            pass
 
-        # Extract nodal reactions and store them in the database
-        extract_nodal_reactions(conn, cursor, uID, primary_combo_count, secondary_combo_count)
+        else:
 
-        # Extract nodal displacements and store them in the database
-        extract_nodal_displacements(conn, cursor, uID, primary_combo_count, secondary_combo_count)
+            # Extract nodal reactions and store them in the database
+            extract_nodal_reactions(conn, cursor, uID, primary_combo_count, secondary_combo_count)
 
-        # Extract nodal coordinates and store them in the database
-        extract_nodal_coordinates(conn, cursor, uID)
+            # Extract nodal displacements and store them in the database
+            extract_nodal_displacements(conn, cursor, uID, primary_combo_count, secondary_combo_count)
 
-        # Extract the beam properties and store them in the database
-        extract_beam_properties(conn, cursor, uID)
+            # Extract nodal coordinates and store them in the database
+            extract_nodal_coordinates(conn, cursor, uID)
 
-        # Extract beam forces and store them in the database
-        extract_beam_forces(conn, cursor, uID, primary_combo_count, secondary_combo_count)
+            # Extract the beam properties and store them in the database
+            extract_beam_properties(conn, cursor, uID)
 
-        # Extract beam displacements and store them in the database
-        extract_beam_displacements(conn, cursor, uID, primary_combo_count, secondary_combo_count)
+            # Extract beam forces and store them in the database
+            extract_beam_forces(conn, cursor, uID, primary_combo_count, secondary_combo_count)
 
-        # Close the Strand7 model
-        St7.St7CloseResultFile(uID)
-        St7.St7CloseFile(uID)
-        St7.St7Release()
+            # Extract beam displacements and store them in the database
+            extract_beam_displacements(conn, cursor, uID, primary_combo_count, secondary_combo_count)
 
-    conn.close()
+            # Close the Strand7 model
+            St7.St7CloseResultFile(uID)
+            St7.St7CloseFile(uID)
+            St7.St7Release()
 
 
 if __name__ == '__main__':
