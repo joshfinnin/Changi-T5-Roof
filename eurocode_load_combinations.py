@@ -264,6 +264,31 @@ class CombinationFactory:
 if __name__ == '__main__':
 
     # ----------------------------------------------------------------------
+    # USER NOTES/INSTRUCTIONS
+    # The following code has been developed to generate load combinations to
+    # Eurocode for Strand7 in bulk.
+    # 1. The component names should match exactly the individual load cases
+    # from the Strand model (for consistency).
+    # 2. These are used to generate ComponentCases using a FactorSet.  The
+    # FactorSet is in essence the load factors stipulated by Eurocode A1.1,
+    # A1.2, and A1.3 to be applied for the different roles in the
+    # combinations.
+    # 3. The ComponentCases can be linked to a single Direction, or
+    # multiple Directions, each of which has a name and VertDirectionTag
+    # 4. An Action can then be defined through a collection of Directions,
+    # an ActionType, and a name.
+    # 5. A series of Actions are provided to a CombinationFactory.
+    # 6. The CombinationFactory then uses the Eurocode algorithm to
+    # generate load combinations in bulk.
+    # 7. These are then written to file, and a string represention printed
+    # to the console.
+    # The USER SHOULD ENSURE that the file path for the output .lcf file is
+    # correct,component cases are correct, the directions are correct, the
+    # actions are appropriately included, the factors are correct, and any
+    # filtering at the end is appropriate to their needs.
+    # ----------------------------------------------------------------------
+
+    # ----------------------------------------------------------------------
     # DEFINE OUTPUT FILE PATH
     # ----------------------------------------------------------------------
     combination_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.9\Stage 2&3.lcf"
@@ -398,10 +423,10 @@ if __name__ == '__main__':
                               Direction("Wind Y Neg Down1", wind_s1_YND1_components, VertDirectionTag.DOWN),
                               Direction("Wind Y Neg Down2", wind_s1_YND2_components, VertDirectionTag.DOWN),
 
-                              Direction("Wind 45° X Pos Y Pos", wind_s1_45_XPYP_components, VertDirectionTag.NA),
-                              Direction("Wind 45° X Pos Y Pos", wind_s1_45_XPYN_components, VertDirectionTag.NA),
-                              Direction("Wind 45° X Neg Y Pos", wind_s1_45_XNYP_components, VertDirectionTag.NA),
-                              Direction("Wind 45° X Neg Y Neg", wind_s1_45_XNYN_components, VertDirectionTag.NA)
+                              Direction("Wind 45 X Pos Y Pos", wind_s1_45_XPYP_components, VertDirectionTag.NA),
+                              Direction("Wind 45 X Pos Y Pos", wind_s1_45_XPYN_components, VertDirectionTag.NA),
+                              Direction("Wind 45 X Neg Y Pos", wind_s1_45_XNYP_components, VertDirectionTag.NA),
+                              Direction("Wind 45 X Neg Y Neg", wind_s1_45_XNYN_components, VertDirectionTag.NA)
                               ]
 
     wind_stage2_directions = [Direction("Wind X Pos Up", wind_s2_XPU_components, VertDirectionTag.UP),
@@ -465,8 +490,11 @@ if __name__ == '__main__':
     actions_stage2_up = [GMIN_ACTION, WIND_STAGE2_ACTION, THERMAL_ACTION, EHF_ACTION]
     actions_stage2_down = [GMAX_ACTION, LIVE_ACTION, WIND_STAGE2_ACTION, THERMAL_ACTION, EHF_ACTION]
 
-    combo_factory = CombinationFactory(actions_stage2_down, stage_tag="S2_")
-    vertical_filter = VertDirectionTag.UP
+    # ----------------------------------------------------------------------
+    # USER INPUT REQUIRED HERE
+    # ----------------------------------------------------------------------
+    combo_factory = CombinationFactory(actions_stage1_down, stage_tag="S1_") # <--------  EDIT THIS LINE TO USE THE ACTION LIST
+    vertical_filter = VertDirectionTag.UP  # <----------- FILTER SHOULD BE THE OPPOSITE OF THE ACTION SET (i.e. actions_stage1_down => VertDirectionTag.UP)
 
     with open(combination_fp, 'w+') as file:
 
@@ -475,13 +503,9 @@ if __name__ == '__main__':
             if combination.leading_direction.component_cases[0].action.name == "EHF":
                 continue
 
-            # For the time being, ignore all cases where the leading action is thermal
-            elif combination.leading_direction.component_cases[0].action.name == "Thermal":
-                continue
-
-            # For the time being, ignore all cases where the leading action is live
-            elif combination.leading_direction.component_cases[0].action.name == "Live":
-                continue
+            # # For the time being, ignore all cases where the leading action is thermal
+            # elif combination.leading_direction.component_cases[0].action.name:
+            #     continue
 
             elif combination.leading_direction.direction_tag == vertical_filter:
                 continue
