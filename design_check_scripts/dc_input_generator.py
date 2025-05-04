@@ -7,6 +7,7 @@ import csv
 from Geometry.structural_geometry_mappers import query_from_sql
 import logging
 
+# Dictionary used to map from the Strand7 property names to the DC Lightning section catalogue
 section_lookup_dict = {"E91 ExhaustSupport {CAT EN-SHS SHS200x200x6.3 20100728}": "SHS200x200x6.3",
                        "E92 ExhaustVert {CAT EN-SHS SHS200x200x8 20110705}": "SHS200x200x8",
                        "E93 ExhaustArc {CAT EN-RHS RHS200x150x6.3 20110705}": "RHS200x150x6.3",
@@ -146,6 +147,8 @@ section_lookup_dict = {"E91 ExhaustSupport {CAT EN-SHS SHS200x200x6.3 20100728}"
                        "G100 QLColumn {UB533x312x331}": "UB533x312x331"
                        }
 
+# Dictionary used to map the station point float to a corresponding integer value
+# Seems to work fine, but need to be careful with this approach as it risks near-miss issues if used incorrectly
 position_dict = {0.0: 1,
                  0.25: 2,
                  0.5: 3,
@@ -153,6 +156,7 @@ position_dict = {0.0: 1,
                  1.0: 5}
 
 
+# Convenience function for rounding to a predetermined precision
 def rnd(f: float, precision=2):
     return round(f, precision)
 
@@ -163,13 +167,23 @@ if __name__ == '__main__':
     # FILE PATH INPUTS FOR THE STRAND DATABASES AND OUTPUT FILE
     # ----------------------------------------------------------------------
 
+    # Have used a dictionary for this step, as the key for a given model below
+    # is used as the identifier for that result in the input file (i.e. allows
+    # tracking of which model variant a given record comes from so that it can
+    # be located for review purposes)
     strand_db_dict = {"UB_Gmax": r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.6\UB_Gmax\V1_3_6_UB_Gmax.db",
                       "UB_Gmin": r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.6\UB_Gmin\V1_3_6_UB_Gmin.db",
                       "LB_Gmax": r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.6\LB_Gmax\V1_3_6_LB_Gmax.db",
                       "LB_Gmin": r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.6\LB_Gmin\V1_3_6_LB_Gmin.db"}
 
+    # Effective length input file, generated using the
+    # effective_length_initializer.py module
     effective_length_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.6\Updated Staging\Purlin Checks\Initial_Effective_Lengths.csv"
+
+    # Output file of this script, which is the DC Lightning input file
     output_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.6\Updated Staging\Purlin Checks\V1_3_6_Combined_Unstaged_Model_Checks.csv"
+
+    # Logging file, to capture some errors in mapping or other error types handled
     logging_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.6\Updated Staging\Purlin Checks\DC Lighting Unstaged Input File Error Log.txt"
 
     # ----------------------------------------------------------------------
@@ -178,6 +192,7 @@ if __name__ == '__main__':
 
     logging.basicConfig(filename=logging_fp, level=logging.INFO)
     logging_warnings = []
+    logging_errors = []
 
     # ----------------------------------------------------------------------
     # GET EFFECTIVE LENGTH INPUTS
@@ -235,10 +250,22 @@ if __name__ == '__main__':
                     output_file.write(result_string)
 
                 except KeyError as ke:
-                    logging_warnings.append(f"Unable to locate section for property: {ke}")
+                    logging_warnings.append(f"Issue with dict key.\n"
+                                            f"Unable to locate section for property: {ke}")
 
+                except OSError as ose:
+                    logging_errors.append(f"Failed to write to file {output_fp}. File may be in use or locked.")
+
+    # Write relevant messages to log file.
     logging_warnings = list(set(logging_warnings))
     logging_warnings.sort()
+
+    logging_errors = list(set(logging_errors))
+    logging_errors.sort()
+
     for warning in logging_warnings:
         logging.warning(warning)
+
+    for error in logging_errors:
+        logging.error(error)
 
