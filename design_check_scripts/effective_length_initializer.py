@@ -11,6 +11,7 @@ from sqlite3 import *
 from typing import Union
 import csv
 
+# 1, 2, 3, 4, 15, 16, and 66 within the _group_num_dict is redundant. Stair 03 and Stair 04 groups excluded.
 _group_num_dict = {1: r'Leaf 03-07\03-07\1D\E9x Exhaust\E91 ExhaustSupport',
                    2: r'Leaf 03-07\03-07\1D\E9x Exhaust\E92 ExhaustVert',
                    3: r'Leaf 03-07\03-07\1D\E9x Exhaust\E93 ExhaustArc',
@@ -73,7 +74,7 @@ _group_num_dict = {1: r'Leaf 03-07\03-07\1D\E9x Exhaust\E91 ExhaustSupport',
                    60: r'Leaf 03-07\03-07\Facade\FacadeTransomA',
                    61: r'Leaf 03-07\03-07\Facade\FacadeTransomB',
                    62: r'Leaf 03-07\03-07\Facade\FacadeTransomC',
-                   63: r'Leaf 03-07\03-07\Facade\G40 FacadeHeaderA',
+                   63: r'Leaf 03-07\03-07\Facade\G40 FacadeHeader',
                    64: r'Leaf 03-07\03-07\Facade\G50 ClerestoryMullion',
                    65: r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\2D_ExhaustPanels',
                    66: r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\G90_ExhaustDummy',
@@ -101,19 +102,8 @@ _group_num_dict = {1: r'Leaf 03-07\03-07\1D\E9x Exhaust\E91 ExhaustSupport',
                    88: r'Leaf 03-07\03-08\Facade\3850 QL_G50 Clerestory',
                    89: r'Leaf 03-07\03-08\Facade\3851 QL_G51 Mullion Typical',
                    90: r'Leaf 03-07\03-08\Facade\3854 QL_G54 Mullion Glazed',
-                   91: r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Bracing',
-                   92: r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Roof Bracing',
-                   93: r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Roof Stubs',
-                   94: r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Columns',
-                   95: r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03ClipOnSupports',
-                   96: r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Stringers',
-                   97: r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Trimmers',
-                   98: r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Portal Beams',
-                   99: r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Roof Cantilevers',
-                   100: r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Roof Transfers',
-                   101: r'Leaf 03-07\03-07\1D\E9x Exhaust',
-                   102: r'Leaf 03-07\03-07\Facade\G41 FacadeHeaderB',
-                   103: r'Leaf 03-07\03-07\Connections\LinksRigid_Facade'}
+                   91: r'Leaf 03-07\03-07\1D\E9x Exhaust',}
+
 
 _group_name_dict = {v: k for k, v in _group_num_dict.items()}
 
@@ -190,9 +180,9 @@ if __name__ == '__main__':
     # FILE PATH INPUTS FOR THE STRAND DATABASES AND OUTPUT FILE
     # ----------------------------------------------------------------------
 
-    strand_db_fp = r"C:\Users\Josh.Finnin\Desktop\Demonstration of Database Dump\Strand7 Model Dump.db"
+    strand_db_fp = r"C:\Users\lisa.lin\Mott MacDonald\MBC SAM Project Portal - Task 17 - Prototype\WIP\01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\V1_4_4_LB_Gmax.db"
 
-    csv_fp = r"C:\Users\Josh.Finnin\Desktop\Demonstration of Database Dump\Initial_Effective_Lengths.csv"
+    csv_fp = r"C:\Users\lisa.lin\Mott MacDonald\MBC SAM Project Portal - Task 17 - Prototype\WIP\01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\Effective_Lengths.csv"
 
     # ----------------------------------------------------------------------
     # DEFINES THE GROUPS THAT CAN BE USED FOR RESTRAINT OF ANOTHER GROUP FOR
@@ -223,8 +213,8 @@ if __name__ == '__main__':
                                         r'Leaf 03-07\03-07\1D\G28 BracingPlanBot': (0,),
                                         r'Leaf 03-07\03-07\1D\G29 ClipOnEdge': (27,),
                                         r'Leaf 03-07\03-07\1D\G30 ClipOnVert': (0,),
-                                        r'Leaf 03-07\03-07\1D\G31 ClipOnTop': (26, 27),
-                                        r'Leaf 03-07\03-07\1D\G32 ClipOnBot': (26, 27),
+                                        r'Leaf 03-07\03-07\1D\G31 ClipOnTop': (26,29),
+                                        r'Leaf 03-07\03-07\1D\G32 ClipOnBot': (26,29),
                                         r'Leaf 03-07\03-07\1D\G33 ClipOnDiag': (0,),
                                         r'Leaf 03-07\03-07\1D\G41 FacadeBot': (10,),
                                         r'Leaf 03-07\03-07\1D\G43 ColumnHeadExt': (0,),
@@ -233,7 +223,7 @@ if __name__ == '__main__':
                                         r'Leaf 03-07\03-07\1D\G60 RooflightPrimary': (0,),
                                         r'Leaf 03-07\03-07\1D\G61 RooflightSecondary': (34,),
                                         r'Leaf 03-07\03-07\1D\G62 RooflightTertiary': (34, 35),
-                                        r'Leaf 03-07\03-07\1D\G63 RooflightUpstand': (37,),
+                                        r'Leaf 03-07\03-07\1D\G63 RooflightUpstand': (0,),
                                         r'Leaf 03-07\03-07\1D\G69 PileCap': (0,),
                                         r'Leaf 03-07\03-07\1D\G7x Column\G70 ColumnBaseExt': (0,),
                                         r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-1': (0,),
@@ -259,7 +249,7 @@ if __name__ == '__main__':
                                         r'Leaf 03-07\03-07\Facade\FacadeTransomA': (0,),
                                         r'Leaf 03-07\03-07\Facade\FacadeTransomB': (0,),
                                         r'Leaf 03-07\03-07\Facade\FacadeTransomC': (0,),
-                                        r'Leaf 03-07\03-07\Facade\G40 FacadeHeaderA': (103,),
+                                        r'Leaf 03-07\03-07\Facade\G40 FacadeHeaderA': (0,),
                                         r'Leaf 03-07\03-07\Facade\G50 ClerestoryMullion': (0,),
                                         r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\2D_ExhaustPanels': (0,),
                                         r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\G90_ExhaustDummy': (0,),
@@ -287,19 +277,7 @@ if __name__ == '__main__':
                                         r'Leaf 03-07\03-08\Facade\3850 QL_G50 Clerestory': (0,),
                                         r'Leaf 03-07\03-08\Facade\3851 QL_G51 Mullion Typical': (0,),
                                         r'Leaf 03-07\03-08\Facade\3854 QL_G54 Mullion Glazed': (0,),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Bracing': (0,),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Roof Bracing': (0,),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Roof Stubs': (0,),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Columns': (96,),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03ClipOnSupports': (0,),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Stringers': (0,),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Trimmers': (73, 79, 100),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Portal Beams': (0,),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Roof Cantilevers': (93, 94),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Roof Transfers': (78,),
                                         r'Leaf 03-07\03-07\1D\E9x Exhaust': (9, 19),
-                                        r'Leaf 03-07\03-07\Connections\LinksRigid_Facade': (0,),
-                                        r'Leaf 03-07\03-07\Facade\G41 FacadeHeaderB': (103,)
                                         }
 
     MINOR_AXIS_RESTRAINT_GROUPS_DICT = {r'Leaf 03-07\03-07\1D\E9x Exhaust\E91 ExhaustSupport': (0,),
@@ -362,7 +340,7 @@ if __name__ == '__main__':
                                         r'Leaf 03-07\03-07\Facade\FacadeTransomA': (0,),
                                         r'Leaf 03-07\03-07\Facade\FacadeTransomB': (0,),
                                         r'Leaf 03-07\03-07\Facade\FacadeTransomC': (0,),
-                                        r'Leaf 03-07\03-07\Facade\G40 FacadeHeaderA': (103,),
+                                        r'Leaf 03-07\03-07\Facade\G40 FacadeHeaderA': (0,),
                                         r'Leaf 03-07\03-07\Facade\G50 ClerestoryMullion': (0,),
                                         r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\2D_ExhaustPanels': (0,),
                                         r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\G90_ExhaustDummy': (0,),
@@ -390,19 +368,7 @@ if __name__ == '__main__':
                                         r'Leaf 03-07\03-08\Facade\3850 QL_G50 Clerestory': (0,),
                                         r'Leaf 03-07\03-08\Facade\3851 QL_G51 Mullion Typical': (0,),
                                         r'Leaf 03-07\03-08\Facade\3854 QL_G54 Mullion Glazed': (0,),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Bracing': (0,),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Roof Bracing': (0,),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Roof Stubs': (0,),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Columns': (98,),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03ClipOnSupports': (0,),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Stringers': (0,),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Trimmers': (73, 79, 100),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Portal Beams': (0,),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Roof Cantilevers': (93, 94),
-                                        r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Roof Transfers': (92,),
                                         r'Leaf 03-07\03-07\1D\E9x Exhaust': (9, 19),
-                                        r'Leaf 03-07\03-07\Connections\LinksRigid_Facade': (0,),
-                                        r'Leaf 03-07\03-07\Facade\G41 FacadeHeaderB': (103,)
                                         }
 
     TORSIONAL_AXIS_RESTRAINT_GROUPS_DICT = {r'Leaf 03-07\03-07\1D\E9x Exhaust\E91 ExhaustSupport': (0,),
@@ -465,7 +431,7 @@ if __name__ == '__main__':
                                             r'Leaf 03-07\03-07\Facade\FacadeTransomA': (0,),
                                             r'Leaf 03-07\03-07\Facade\FacadeTransomB': (0,),
                                             r'Leaf 03-07\03-07\Facade\FacadeTransomC': (0,),
-                                            r'Leaf 03-07\03-07\Facade\G40 FacadeHeaderA': (103,),
+                                            r'Leaf 03-07\03-07\Facade\G40 FacadeHeaderA': (0,),
                                             r'Leaf 03-07\03-07\Facade\G50 ClerestoryMullion': (0,),
                                             r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\2D_ExhaustPanels': (0,),
                                             r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\G90_ExhaustDummy': (0,),
@@ -493,19 +459,7 @@ if __name__ == '__main__':
                                             r'Leaf 03-07\03-08\Facade\3850 QL_G50 Clerestory': (0,),
                                             r'Leaf 03-07\03-08\Facade\3851 QL_G51 Mullion Typical': (0,),
                                             r'Leaf 03-07\03-08\Facade\3854 QL_G54 Mullion Glazed': (0,),
-                                            r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Bracing': (0,),
-                                            r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Roof Bracing': (0,),
-                                            r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Roof Stubs': (0,),
-                                            r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Columns': (98,),
-                                            r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03ClipOnSupports': (0,),
-                                            r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Stringers': (0,),
-                                            r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Trimmers': (73, 79, 100),
-                                            r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Portal Beams': (0,),
-                                            r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Roof Cantilevers': (93, 94),
-                                            r'Leaf 03-07\AutoCAD import Export for Stair 03 Framing.dxf\Stair03Roof Transfers': (92,),
                                             r'Leaf 03-07\03-07\1D\E9x Exhaust': (9, 19),
-                                            r'Leaf 03-07\03-07\Connections\LinksRigid_Facade': (0,),
-                                            r'Leaf 03-07\03-07\Facade\G41 FacadeHeaderB': (103,)
                                             }
 
     # ----------------------------------------------------------------------

@@ -171,20 +171,20 @@ if __name__ == '__main__':
     # is used as the identifier for that result in the input file (i.e. allows
     # tracking of which model variant a given record comes from so that it can
     # be located for review purposes)
-    strand_db_dict = {"UB_Gmax": r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.6\UB_Gmax\V1_3_6_UB_Gmax.db",
-                      "UB_Gmin": r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.6\UB_Gmin\V1_3_6_UB_Gmin.db",
-                      "LB_Gmax": r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.6\LB_Gmax\V1_3_6_LB_Gmax.db",
-                      "LB_Gmin": r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.6\LB_Gmin\V1_3_6_LB_Gmin.db"}
+    strand_db_dict = {"UB_Gmax": r"C:\Users\lisa.lin\Mott MacDonald\MBC SAM Project Portal - Task 17 - Prototype\WIP\01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\V1_4_4_UB_Gmax.db",
+                      "UB_Gmin": r"C:\Users\lisa.lin\Mott MacDonald\MBC SAM Project Portal - Task 17 - Prototype\WIP\01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\V1_4_4_UB_Gmin.db",
+                      "LB_Gmax": r"C:\Users\lisa.lin\Mott MacDonald\MBC SAM Project Portal - Task 17 - Prototype\WIP\01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\V1_4_4_LB_Gmax.db",
+                      "LB_Gmin": r"C:\Users\lisa.lin\Mott MacDonald\MBC SAM Project Portal - Task 17 - Prototype\WIP\01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\V1_4_4_LB_Gmin.db"}
 
     # Effective length input file, generated using the
     # effective_length_initializer.py module
-    effective_length_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.6\Updated Staging\Purlin Checks\Initial_Effective_Lengths.csv"
+    effective_length_fp = r"C:\Users\lisa.lin\Mott MacDonald\MBC SAM Project Portal - Task 17 - Prototype\WIP\01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\Effective_Lengths.csv"
 
     # Output file of this script, which is the DC Lightning input file
-    output_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.6\Updated Staging\Purlin Checks\V1_3_6_Combined_Unstaged_Model_Checks.csv"
+    output_fp = r"C:\Users\lisa.lin\Mott MacDonald\MBC SAM Project Portal - Task 17 - Prototype\WIP\01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\250620_DC_input.csv"
 
     # Logging file, to capture some errors in mapping or other error types handled
-    logging_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.6\Updated Staging\Purlin Checks\DC Lighting Unstaged Input File Error Log.txt"
+    logging_fp = r"C:\Users\lisa.lin\Mott MacDonald\MBC SAM Project Portal - Task 17 - Prototype\WIP\01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\250620_error_log.txt"
 
     # ----------------------------------------------------------------------
     # SETUP LOGGING
@@ -223,7 +223,7 @@ if __name__ == '__main__':
     JOIN BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber;"""
 
     with open(output_fp, 'w+') as output_file:
-        output_file.write("Id,BeamNumber,ResultCase,StationPoint,CrossSectionId,Steel Grade,L_cry [m],L_crz [m],L_crt [m],L_c [m],N_Ed [kN],V_yEd [kN],V_zEd [kN],M_yEd [kNm],M_zEd [kNm],M_TEd [kNm],National Annex\n")
+        output_file.write("Id,CrossSectionId,Steel Grade,L_crT [m],L_cry [m],C_my,L_crz [m],C_mz,L_c [m],C_mLT,z_g [mm],C_1,C_2,alpha_cr_min,lambda_cr_max,N_Ed [kN],V_yEd [kN],V_zEd [kN],M_yEd [kNm],M_zEd [kNm],T_Ed [kNm],National Annex\n")
 
         # Iterate through each of the model database files to get the results
         for model_name, model_db in strand_db_dict.items():
@@ -233,9 +233,16 @@ if __name__ == '__main__':
                 # There are some keys that won't map correctly (not meant to be designed in this module)
                 try:
                     beam_number = result["BeamNumber"]
-                    Lby = effective_length_dict[beam_number]["Lby"]
-                    Lbz = effective_length_dict[beam_number]["Lbz"]
-                    Lbt = effective_length_dict[beam_number]["Lbt"]
+                    Lcry = effective_length_dict[beam_number]["L_cry"]
+                    Lcrz = effective_length_dict[beam_number]["L_crz"]
+                    Lcrt = effective_length_dict[beam_number]["L_crT"]
+                    Lc = effective_length_dict[beam_number]["L_c"]
+                    C1 = effective_length_dict[beam_number]["C_1"]
+                    C2 = effective_length_dict[beam_number]["C_2"]
+                    zg = effective_length_dict[beam_number]["z_g"]
+                    Cmy = effective_length_dict[beam_number]["C_my"]
+                    Cmz = effective_length_dict[beam_number]["C_mz"]
+                    Cmlt = effective_length_dict[beam_number]["C_mLT"]
                     case_name = result["ResultCaseName"]
                     case_name = case_name.replace(":", "#")
                     position = result["Position"]
@@ -246,7 +253,7 @@ if __name__ == '__main__':
                     Mx = rnd(result["Mx"])
                     My = rnd(result["My"])
                     Mz = rnd(result["Mz"])
-                    result_string = f"{model_name}-{beam_number}-{case_name}-{position},{beam_number},1,{position},{profile},S355,{Lby},{Lbz},{Lbt},{Lbz},{Fx},{Fy},{Fz},{My},{Mz},{Mx},ss_SG\n"
+                    result_string = f"{model_name}-{beam_number}-{case_name}-{position},{profile},S355,{Lcrt},{Lcry},{Cmy},{Lcrz},{Cmz},{Lc},{Cmlt},{zg},{C1},{C2},,,{Fx},{Fy},{Fz},{My},{Mz},{Mx},ss_SG\n"
                     output_file.write(result_string)
 
                 except KeyError as ke:
