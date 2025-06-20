@@ -207,14 +207,12 @@ if __name__ == '__main__':
                                         r'Leaf 03-07\03-07\1D\G02 PrimaryBot': (7, 8, 33),
                                         r'Leaf 03-07\03-07\1D\G03 PrimaryDiag': (0,),
                                         r'Leaf 03-07\03-07\1D\G04 PrimaryVert': (0,),
-                                        r'Leaf 03-07\03-07\1D\G05 SecondaryTop': (5, 11, 12,),
+                                        r'Leaf 03-07\03-07\1D\G05 SecondaryTop': (5, 11, 12),
                                         r'Leaf 03-07\03-07\1D\G06 SecondaryBot': (6, 11, 12),
                                         r'Leaf 03-07\03-07\1D\G07 SecondaryDiag': (0,),
                                         r'Leaf 03-07\03-07\1D\G08 SecondaryVert': (0,),
                                         r'Leaf 03-07\03-07\1D\G09 EdgeTrussTop': (5, 9),
                                         r'Leaf 03-07\03-07\1D\G10 EdgeTrussBot': (6, 10),
-                                        r'Leaf 03-07\03-07\1D\G10x StairsPhase1a': (0,),
-                                        r'Leaf 03-07\03-07\1D\G10x StairsPhase1b': (0,),
                                         r'Leaf 03-07\03-07\1D\G11 EdgeTrussDiag': (0,),
                                         r'Leaf 03-07\03-07\1D\G12 EdgeTrussVert': (0,),
                                         r'Leaf 03-07\03-07\1D\G23 PurlinTop': (5, 9),
@@ -318,8 +316,6 @@ if __name__ == '__main__':
                                         r'Leaf 03-07\03-07\1D\G08 SecondaryVert': (0,),
                                         r'Leaf 03-07\03-07\1D\G09 EdgeTrussTop': (5, 9, 17, 18),
                                         r'Leaf 03-07\03-07\1D\G10 EdgeTrussBot': (6, 10, 17, 18),
-                                        r'Leaf 03-07\03-07\1D\G10x StairsPhase1a': (0,),
-                                        r'Leaf 03-07\03-07\1D\G10x StairsPhase1b': (0,),
                                         r'Leaf 03-07\03-07\1D\G11 EdgeTrussDiag': (0,),
                                         r'Leaf 03-07\03-07\1D\G12 EdgeTrussVert': (0,),
                                         r'Leaf 03-07\03-07\1D\G23 PurlinTop': (5, 9, 23),
@@ -423,8 +419,6 @@ if __name__ == '__main__':
                                             r'Leaf 03-07\03-07\1D\G08 SecondaryVert': (0,),
                                             r'Leaf 03-07\03-07\1D\G09 EdgeTrussTop': (5, 9, 17, 18),
                                             r'Leaf 03-07\03-07\1D\G10 EdgeTrussBot': (6, 10, 17, 18),
-                                            r'Leaf 03-07\03-07\1D\G10x StairsPhase1a': (0,),
-                                            r'Leaf 03-07\03-07\1D\G10x StairsPhase1b': (0,),
                                             r'Leaf 03-07\03-07\1D\G11 EdgeTrussDiag': (0,),
                                             r'Leaf 03-07\03-07\1D\G12 EdgeTrussVert': (0,),
                                             r'Leaf 03-07\03-07\1D\G23 PurlinTop': (5, 9, 23),
@@ -532,7 +526,7 @@ if __name__ == '__main__':
         writer = csv.writer(csv_file)
 
         # Write headers
-        headers = ["BeamNumber", "GroupName", "Lby", "Lbz", "Lbt"]
+        headers = ["BeamNumber", "GroupName", "L_crT", "L_cry", "L_crz", "L_c", "C_1", "C2", "z_g", "C_my", "C_mz", "C_mLT"]
         writer.writerow(headers)
 
         for group_name in MAJOR_AXIS_RESTRAINT_GROUPS_DICT.keys():
@@ -583,6 +577,6 @@ if __name__ == '__main__':
                 major_length = major_axis_length_dict[beam_number]
                 minor_length = minor_axis_length_dict[beam_number]
                 torsional_length = torsional_axis_length_dict[beam_number]
-                writer.writerow([beam_number, group_name, major_length, minor_length, torsional_length])
+                writer.writerow([beam_number, group_name, torsional_length, major_length, minor_length, minor_length, 1, 0, 0, 1, 1, 1])
 
 
