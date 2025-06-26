@@ -3,6 +3,7 @@
 database_extractor.py
 
 Module to extract the analysis results from a Strand7 model into a SQLite database.
+This is prior to addition of features to support Parquet.
 """
 
 import ctypes
