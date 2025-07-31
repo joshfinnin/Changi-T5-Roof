@@ -3,22 +3,97 @@
 database_extractor.py
 
 Module to extract the analysis results from a Strand7 model into a SQLite database.
-This is prior to addition of features to support Parquet.
+Have added support for producing parquet files of results.
 """
+
+__version__ = "1.1.0"
 
 import ctypes
 from sqlite3 import Connection, Cursor, connect
+import pyarrow as pa
+import pyarrow.parquet as pq
 import os
+import time
 import tkinter as tk
 from tkinter import filedialog
+import pathlib
 from getpass import getuser
 
 # Import the St7API module
 import St7API as St7
 
+_BEAM_FORCE_SCHEMA = pa.schema([
+    ("ResultId", pa.string()),
+    ("BeamNumber", pa.int32()),
+    ("ResultCase", pa.int32()),
+    ("ResultCaseName", pa.string()),
+    ("Position", pa.float16()),
+    ("Fx", pa.float32()),
+    ("Fy", pa.float32()),
+    ("Fz", pa.float32()),
+    ("Mx", pa.float32()),
+    ("My", pa.float32()),
+    ("Mz", pa.float32())
+])
+
+_BEAM_PROPERTIES_SCHEMA = pa.schema([
+    ("BeamNumber", pa.int32()),
+    ("N1", pa.int32()),
+    ("N2", pa.int32()),
+    ("Length", pa.float32()),
+    ("PropertyName", pa.string()),
+    ("GroupName", pa.string()),
+    ("BeamIDNumber", pa.int32())
+])
+
+_NODAL_REACTIONS_SCHEMA = pa.schema([
+    ("ResultId", pa.string()),
+    ("NodeNumber", pa.int32()),
+    ("ResultCase", pa.int32()),
+    ("ResultCaseName", pa.string()),
+    ("Rx", pa.float32()),
+    ("Ry", pa.float32()),
+    ("Rz", pa.float32()),
+    ("Rxx", pa.float32()),
+    ("Ryy", pa.float32()),
+    ("Rzz", pa.float32())
+])
+
+_NODAL_DISPLACEMENTS_SCHEMA = pa.schema([
+    ("ResultId", pa.string()),
+    ("NodeNumber", pa.int32()),
+    ("ResultCase", pa.int32()),
+    ("ResultCaseName", pa.string()),
+    ("Dx", pa.float32()),
+    ("Dy", pa.float32()),
+    ("Dz", pa.float32()),
+    ("Dxx", pa.float32()),
+    ("Dyy", pa.float32()),
+    ("Dzz", pa.float32())
+])
+
+_NODAL_COORDINATES_SCHEMA = pa.schema([
+    ("NodeNumber", pa.int32()),
+    ("X", pa.float32()),
+    ("Y", pa.float32()),
+    ("Z", pa.float32())
+])
+
+SCHEMAS = {"BeamForces": _BEAM_FORCE_SCHEMA,
+           "BeamProperties": _BEAM_PROPERTIES_SCHEMA,
+           "NodalReactions": _NODAL_REACTIONS_SCHEMA,
+           "NodalDisplacements": _NODAL_DISPLACEMENTS_SCHEMA,
+           "NodalCoordinates": _NODAL_COORDINATES_SCHEMA}
+
+
+def _clear_lists(lists_to_clear: tuple):
+    """Convenience function for clearing lists."""
+    for lst in lists_to_clear:
+        lst.clear()
+
 
 # Function to create a database and table
-def create_database(conn: Connection, cursor: Cursor):
+def create_sqlite_database(conn: Connection, cursor: Cursor):
 
     # Create table for node reactions
     cursor.execute('''
@@ -123,63 +198,370 @@ def create_database(conn: Connection, cursor: Cursor):
 
 
 # Function to insert nodal reactions into the database
-def insert_nodal_reactions(conn: Connection, cursor: Cursor, nodal_results: list):
+def sql_insert_nodal_reactions(conn: Connection, cursor: Cursor, uID, primary_combo_count: ctypes.c_int,
+                               secondary_combo_count: ctypes.c_int):
+
+    nodal_reactions = []
 
     insertion_query = """
             INSERT INTO NodalReactions (ResultId, NodeNumber, ResultCase, ResultCaseName, ReactionX, ReactionY, ReactionZ, ReactionXX, ReactionYY, ReactionZZ)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 
-    cursor.executemany(insertion_query, nodal_results)
+    for result in extract_nodal_reactions(uID, primary_combo_count=primary_combo_count,
+                                          secondary_combo_count=secondary_combo_count):
+        nodal_reactions.append(result)
+
+        if len(nodal_reactions) % 50_000 == 0:
+            cursor.executemany(insertion_query, nodal_reactions)
+            nodal_reactions.clear()
+
+    cursor.executemany(insertion_query, nodal_reactions)
+    nodal_reactions.clear()
 
     conn.commit()
 
+    print("Nodal reactions written to DB.")
+
 
 # Function to insert nodal displacements into the database
-def insert_nodal_displacements(conn: Connection, cursor: Cursor, nodal_results: list):
+def sql_insert_nodal_displacements(conn: Connection, cursor: Cursor, uID, primary_combo_count, secondary_combo_count):
 
     insertion_query = """
         INSERT INTO NodalDisplacements (ResultId, NodeNumber, ResultCase, ResultCaseName, DisplacementX, DisplacementY, DisplacementZ, RotationXX, RotationYY, RotationZZ)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
-    cursor.executemany(insertion_query, nodal_results)
+
+    nodal_displacements = []
+
+    for result in extract_nodal_displacements(uID, primary_combo_count, secondary_combo_count):
+
+        nodal_displacements.append(result)
+
+        if len(nodal_displacements) % 50_000 == 0:
+            cursor.executemany(insertion_query, nodal_displacements)
+            nodal_displacements.clear()
+
+    cursor.executemany(insertion_query, nodal_displacements)
+    nodal_displacements.clear()
+
     conn.commit()
+    print("Nodal displacements written to the DB.")
 
 
 # Function to insert nodal coordinates into the database
-def insert_nodal_coordinates(conn: Connection, cursor: Cursor, nodal_results: list):
+def sql_insert_nodal_coordinates(conn: Connection, cursor: Cursor, uID):
+
+    nodal_coordinates = []
 
     insertion_query = """INSERT INTO NodalCoordinates (NodeNumber, X, Y, Z)
     VALUES (?, ?, ?, ?)"""
-    cursor.executemany(insertion_query, nodal_results)
+
+    for result in extract_nodal_coordinates(uID):
+        nodal_coordinates.append(result)
+
+        # Write out the results every 50_000 results or so
+        if len(nodal_coordinates) % 50_000 == 0:
+            cursor.executemany(insertion_query, nodal_coordinates)
+            nodal_coordinates.clear()
+
+    cursor.executemany(insertion_query, nodal_coordinates)
+    nodal_coordinates.clear()
+
     conn.commit()
+
+    print("Nodal coordinates written to DB.")
 
 
 # Function to insert element properties into the database
-def insert_beam_properties(conn: Connection, cursor: Cursor, beam_results: list):
+def sql_insert_beam_properties(conn: Connection, cursor: Cursor, uID):
+
+    beam_properties = []
 
     insertion_query = """INSERT INTO BeamProperties (BeamNumber, N1, N2, Length, PropertyName, GroupName, BeamIDNumber)
     VALUES (?, ?, ?, ?, ?, ?, ?)"""
-    cursor.executemany(insertion_query, beam_results)
+
+    for result in extract_beam_properties(uID):
+
+        beam_properties.append(result)
+
+        # Write out the results every 50_000 results or so
+        if len(beam_properties) % 50_000 == 0:
+            cursor.executemany(insertion_query, beam_properties)
+            beam_properties.clear()
+
+    cursor.executemany(insertion_query, beam_properties)
+    beam_properties.clear()
+
     conn.commit()
+
+    print("Beam attributes and properties written to DB.")
 
 
 # Function to insert element forces into the database
-def insert_beam_forces(conn: Connection, cursor: Cursor, beam_results: list):
+def sql_insert_beam_forces(conn: Connection, cursor: Cursor, uID, primary_combo_count, secondary_combo_count):
+    beam_results = []
 
     insertion_query = """INSERT INTO BeamForces (ResultId, BeamNumber, ResultCase, ResultCaseName, Position, Fx, Fy, Fz, Mx, My, Mz)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+
+    for result in extract_beam_forces(uID, primary_combo_count, secondary_combo_count):
+
+        beam_results.append(result)
+
+        # Write out the results every 50_000 results or so
+        if len(beam_results) % 50_000 == 0:
+            cursor.executemany(insertion_query, beam_results)
+            beam_results.clear()
+
+    # Final executemany call outside the loop to insert any residual results
     cursor.executemany(insertion_query, beam_results)
+    beam_results.clear()
 
     conn.commit()
+
+    print("Beam force results written to DB.")
 
 
 # Function to insert element displacements into the database
-def insert_beam_displacements(conn: Connection, cursor: Cursor, beam_results: list):
+def sql_insert_beam_displacements(conn: Connection, cursor: Cursor, beam_results: list):
 
     insertion_query = """INSERT INTO BeamDisplacements (ResultId, BeamNumber, ResultCase, ResultCaseName, Position, Dx, Dy, Dz, Rx, Ry, Rz)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+
     cursor.executemany(insertion_query, beam_results)
 
     conn.commit()
+
+
+def parquet_insert_nodal_coordinates(uID, directory: pathlib.Path):
+
+    node_numbers = []
+    x_coords = []
+    y_coords = []
+    z_coords = []
+
+    lists_to_process = (node_numbers, x_coords, y_coords, z_coords)
+
+    counter = 0
+
+    with pq.ParquetWriter(directory / "nodal_coordinates.parquet", schema=SCHEMAS["NodalCoordinates"]) as writer:
+        for r in extract_nodal_coordinates(uID):
+            node_numbers.append(r[0])
+            x_coords.append(r[1])
+            y_coords.append(r[2])
+            z_coords.append(r[3])
+
+            counter += 1
+
+            if counter % 50_000 == 0:
+                array = list(pa.array(data) for data in lists_to_process)
+                table = pa.Table.from_arrays(array, schema=SCHEMAS["NodalCoordinates"])
+                writer.write_table(table)
+                _clear_lists(lists_to_process)
+
+        array = list(pa.array(data) for data in lists_to_process)
+        table = pa.Table.from_arrays(array, schema=SCHEMAS["NodalCoordinates"])
+        writer.write_table(table)
+        _clear_lists(lists_to_process)
+
+    print("Nodal coordinates written to DB.")
+
+
+def parquet_insert_nodal_reactions(uID, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int,
+                                   directory: pathlib.Path):
+
+    result_ids = []
+    node_numbers = []
+    case_numbers = []
+    case_names = []
+    rxs = []
+    rys = []
+    rzs = []
+    rxxs = []
+    ryys = []
+    rzzs = []
+
+    lists_to_process = (result_ids, node_numbers, case_numbers, case_names, rxs, rys, rzs, rxxs, ryys, rzzs)
+
+    with pq.ParquetWriter(directory / "nodal_reactions.parquet", schema=SCHEMAS["NodalReactions"]) as writer:
+
+        counter = 0
+
+        for r in extract_nodal_reactions(uID, primary_combo_count=primary_combo_count,
+                                         secondary_combo_count=secondary_combo_count):
+            result_ids.append(r[0])
+            node_numbers.append(r[1])
+            case_numbers.append(r[2])
+            case_names.append(r[3])
+            rxs.append(r[4])
+            rys.append(r[5])
+            rzs.append(r[6])
+            rxxs.append(r[7])
+            ryys.append(r[8])
+            rzzs.append(r[9])
+
+            counter += 1
+
+            if counter % 50_000 == 0:
+                array = list(pa.array(data) for data in lists_to_process)
+                table = pa.Table.from_arrays(array, schema=SCHEMAS["NodalReactions"])
+                writer.write_table(table)
+                _clear_lists(lists_to_process)
+
+        array = list(pa.array(data) for data in lists_to_process)
+        table = pa.Table.from_arrays(array, schema=SCHEMAS["NodalReactions"])
+        writer.write_table(table)
+        _clear_lists(lists_to_process)
+
+        print("Nodal reactions written to DB.")
+
+
+def parquet_insert_nodal_displacements(uID, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int,
+                                       directory: pathlib.Path):
+
+    result_ids = []
+    node_numbers = []
+    case_numbers = []
+    case_names = []
+    dxs = []
+    dys = []
+    dzs = []
+    dxxs = []
+    dyys = []
+    dzzs = []
+
+    lists_to_process = (result_ids, node_numbers, case_numbers, case_names, dxs, dys, dzs, dxxs, dyys, dzzs)
+
+    count = 0
+
+    with pq.ParquetWriter(directory / "nodal_displacements.parquet", schema=SCHEMAS["NodalDisplacements"]) as writer:
+
+        for r in extract_nodal_displacements(uID, primary_combo_count, secondary_combo_count):
+
+            result_ids.append(r[0])
+            node_numbers.append(r[1])
+            case_numbers.append(r[2])
+            case_names.append(r[3])
+            dxs.append(r[4])
+            dys.append(r[5])
+            dzs.append(r[6])
+            dxxs.append(r[7])
+            dyys.append(r[8])
+            dzzs.append(r[9])
+
+            count += 1
+
+            if count % 50_000 == 0:
+                array = list(pa.array(data) for data in lists_to_process)
+                table = pa.Table.from_arrays(array, schema=SCHEMAS["NodalDisplacements"])
+                writer.write_table(table)
+                _clear_lists(lists_to_process)
+
+        array = list(pa.array(data) for data in lists_to_process)
+        table = pa.Table.from_arrays(array, schema=SCHEMAS["NodalDisplacements"])
+        writer.write_table(table)
+        _clear_lists(lists_to_process)
+
+    print("Nodal displacements written to DB.")
+
+
+def parquet_insert_beam_properties(uID, directory: pathlib.Path):
+    """
+    Function for creating the parquet output_file for beam properties.
+    :param uID:
+    :param directory:
+    :return:
+    """
+
+    beam_numbers = []
+    n1s = []
+    n2s = []
+    lengths = []
+    property_names = []
+    group_names = []
+    beam_id_numbers = []
+
+    lists_to_process = (beam_numbers, n1s, n2s, lengths, property_names, group_names, beam_id_numbers)
+
+    with pq.ParquetWriter(directory / "beam_properties.parquet", SCHEMAS["BeamProperties"]) as writer:
+
+        counter = 0
+
+        for r in extract_beam_properties(uID):
+            beam_numbers.append(r[0])
+            n1s.append(r[1])
+            n2s.append(r[2])
+            lengths.append(r[3])
+            property_names.append(r[4])  # Can I just get rid of the string casting that I did above?
+            group_names.append(r[5])
+            beam_id_numbers.append(r[6])
+            counter += 1
+            if counter % 50_000 == 0:
+                array = list(pa.array(data) for data in lists_to_process)
+                table = pa.Table.from_arrays(array, schema=SCHEMAS["BeamProperties"])
+                writer.write_table(table)
+                _clear_lists(lists_to_process)
+
+        # We write one last time for any remaining data in the lists
+        array = list(pa.array(data) for data in
+                     (beam_numbers, n1s, n2s, lengths, property_names, group_names, beam_id_numbers))
+        table = pa.Table.from_arrays(array, schema=SCHEMAS["BeamProperties"])
+        writer.write_table(table)
+        _clear_lists(lists_to_process)
+
+    print("Beam attributes and properties written to DB.")
+
+
+def parquet_insert_beam_forces(uID, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int,
+                               directory: pathlib.Path):
+    """
+
+    """
+
+    result_ids = []
+    beam_numbers = []
+    case_numbers = []
+    case_names = []
+    position_results = []
+    fxs = []
+    fys = []
+    fzs = []
+    mxs = []
+    mys = []
+    mzs = []
+
+    lists_to_process = (result_ids, beam_numbers, case_numbers, case_names, position_results, fxs, fys, fzs, mxs, mys, mzs)
+
+    with pq.ParquetWriter(directory / "beam_forces.parquet", SCHEMAS["BeamForces"]) as writer:
+
+        counter = 0
+
+        for r in extract_beam_forces(uID, primary_combo_count, secondary_combo_count):
+            result_ids.append(r[0])
+            beam_numbers.append(r[1])
+            case_numbers.append(r[2])
+            case_names.append(r[3])
+            position_results.append(r[4])  # Can I just get rid of the string casting that I did above?
+            fxs.append(r[5])
+            fys.append(r[6])
+            fzs.append(r[7])
+            mxs.append(r[8])
+            mys.append(r[9])
+            mzs.append(r[10])
+            counter += 1
+            if counter % 50_000 == 0:
+                array = list(pa.array(data) for data in lists_to_process)
+                table = pa.Table.from_arrays(array, schema=SCHEMAS["BeamForces"])
+                writer.write_table(table)
+                _clear_lists(lists_to_process)
+
+        # We write one last time for any remaining data in the lists
+        array = list(pa.array(data) for data in
+                     (result_ids, beam_numbers, case_numbers, case_names, position_results, fxs, fys, fzs, mxs, mys, mzs))
+        table = pa.Table.from_arrays(array, schema=SCHEMAS["BeamForces"])
+        writer.write_table(table)
+        _clear_lists(lists_to_process)
+
+    print("Beam force results written to DB.")
 
 
 # Initialize Strand7 model
@@ -205,8 +587,7 @@ def initialize_model(model_file: str, result_file: str, scratch_path: str):
 
 
 # Function to extract nodal reactions
-def extract_nodal_reactions(conn: Connection, cursor: Cursor, uID, primary_combo_count: ctypes.c_int,
-                            secondary_combo_count: ctypes.c_int):
+def extract_nodal_reactions(uID, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int):
 
     nNodes = ctypes.c_int(0)
     St7.St7GetTotal(uID, St7.tyNODE, ctypes.byref(nNodes))
@@ -214,14 +595,13 @@ def extract_nodal_reactions(conn: Connection, cursor: Cursor, uID, primary_combo
     nLoadCases = ctypes.c_int(0)
     St7.St7GetNumLoadCase(uID, ctypes.byref(nLoadCases))
 
-    nodal_results = []
     number_of_cases = primary_combo_count.value + secondary_combo_count.value
     for result_case in range(1, number_of_cases + 1):
 
         case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
         St7.St7GetResultCaseName(uID, result_case, case_name, St7.kMaxStrLen)
 
-        case_name_string = case_name.value.decode()
+        case_name_string = str(case_name.value.decode())
         print(f"Extracting node reactions for load case {case_name_string}...")
 
         for node in range(1, nNodes.value + 1):
@@ -231,29 +611,22 @@ def extract_nodal_reactions(conn: Connection, cursor: Cursor, uID, primary_combo
 
             St7.St7GetNodeResult(uID, St7.rtNodeReact, node, result_case, reactions)
             result_id = f"{node}-{result_case}"
-            fx = reactions[0]
-            fy = reactions[1]
-            fz = reactions[2]
-            mx = reactions[3]
-            my = reactions[4]
-            mz = reactions[5]
+            fx = float(reactions[0])
+            fy = float(reactions[1])
+            fz = float(reactions[2])
+            mx = float(reactions[3])
+            my = float(reactions[4])
+            mz = float(reactions[5])
 
-            nodal_results.append((result_id, node, result_case, case_name_string, fx, fy, fz, mx, my, mz))
+            result = (result_id, node, result_case, case_name_string, fx, fy, fz, mx, my, mz)
 
-        # Insert the reactions into the SQLite database
-        # Implementing smarter batching
-        if result_case % 100 == 0 or result_case == number_of_cases:
-            insert_nodal_reactions(conn, cursor, nodal_results)
-            nodal_results.clear()
+            yield result
+
     print("Nodal reactions written to DB.")
-
-    # Having issues running into memory limits, so let's try deleting the nodal results after they are written to the DB
-    del nodal_results
 
 
 # Function to extract nodal displacements
-def extract_nodal_displacements(conn: Connection, cursor: Cursor, uID, primary_combo_count: ctypes.c_int,
-                                secondary_combo_count: ctypes.c_int):
+def extract_nodal_displacements(uID, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int):
 
     nNodes = ctypes.c_int(0)
     St7.St7GetTotal(uID, St7.tyNODE, ctypes.byref(nNodes))
@@ -261,7 +634,6 @@ def extract_nodal_displacements(conn: Connection, cursor: Cursor, uID, primary_c
     nLoadCases = ctypes.c_int(0)
     St7.St7GetNumLoadCase(uID, ctypes.byref(nLoadCases))
 
-    nodal_results = []
     number_of_cases = primary_combo_count.value + secondary_combo_count.value
     for result_case in range(1, number_of_cases + 1):
 
@@ -279,25 +651,16 @@ def extract_nodal_displacements(conn: Connection, cursor: Cursor, uID, primary_c
             dx = displacements[0]
             dy = displacements[1]
             dz = displacements[2]
-            rx = displacements[3]
-            ry = displacements[4]
-            rz = displacements[5]
+            dxx = displacements[3]
+            dyy = displacements[4]
+            dzz = displacements[5]
 
-            nodal_results.append((result_id, node, result_case, case_name.value.decode(), dx, dy, dz, rx, ry, rz))
-
-        # Insert the reactions into the SQLite database
-        # Implementing smarter batching
-        if result_case % 100 == 0 or result_case == number_of_cases:
-            insert_nodal_displacements(conn, cursor, nodal_results)
-            nodal_results.clear()
-    print("Nodal displacements written to DB.")
-
-    # Having issues running into memory limits, so let's try deleting the nodal results after they are written to the DB
-    del nodal_results
+            result = (result_id, node, result_case, case_name.value.decode(), dx, dy, dz, dxx, dyy, dzz)
+            yield result
 
 
 # Function to extract nodal coordinates
-def extract_nodal_coordinates(conn: Connection, cursor: Cursor, uID):
+def extract_nodal_coordinates(uID):
 
     nNodes = ctypes.c_int(0)
     St7.St7GetTotal(uID, St7.tyNODE, ctypes.byref(nNodes))
@@ -307,7 +670,6 @@ def extract_nodal_coordinates(conn: Connection, cursor: Cursor, uID):
     node_coordinate_array = ctypes.c_double * 3
     node_coordinates = node_coordinate_array()
 
-    node_results = []
     for node in range(1, nNodes.value + 1):
         St7.St7GetNodeXYZ(uID, node, node_coordinates)
 
@@ -316,25 +678,18 @@ def extract_nodal_coordinates(conn: Connection, cursor: Cursor, uID):
         z_coord = node_coordinates[2]
 
         result = (node, x_coord, y_coord, z_coord)
-        node_results.append(result)
 
-    if len(node_results) == 0:
-        pass
-    else:
-        insert_nodal_coordinates(conn, cursor, node_results)
-
-    print("Nodal coordinates written to DB.")
+        yield result
 
 
 # Function to extract beam attributes and properties
-def extract_beam_properties(conn: Connection, cursor: Cursor, uID):
+def extract_beam_properties(uID):
 
     nBeams = ctypes.c_int(0)
     St7.St7GetTotal(uID, St7.tyBEAM, ctypes.byref(nBeams))
 
     print("Extracting beam attributes and properties...")
 
-    beam_results = []
     for beam in range(1, nBeams.value + 1):
         # Create an array to store the connection information
         connection_array = ctypes.c_int * St7.kMaxElementNode
@@ -368,21 +723,13 @@ def extract_beam_properties(conn: Connection, cursor: Cursor, uID):
         node2 = connections[2]
         length = element_data_array[0]
 
-        result = (beam, node1, node2, length, property_name.value.decode(), group_name.value.decode(), id_number)
-        beam_results.append(result)
-
-    # Insert the beam force results into the database
-    if len(beam_results) == 0:
-        pass
-    else:
-        insert_beam_properties(conn, cursor, beam_results)
-
-    print("Beam attributes and properties written to DB.")
+        result = (beam, node1, node2, length, property_name.value.decode(),
+                  group_name.value.decode(), id_number.value)
+        yield result
 
 
 # Function to extract the beam force results
-def extract_beam_forces(conn: Connection, cursor: Cursor, uID, primary_combo_count: ctypes.c_int,
-                        secondary_combo_count: ctypes.c_int):
+def extract_beam_forces(uID, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int):
 
     nBeams = ctypes.c_int(0)
     St7.St7GetTotal(uID, St7.tyBEAM, ctypes.byref(nBeams))
@@ -401,12 +748,12 @@ def extract_beam_forces(conn: Connection, cursor: Cursor, uID, primary_combo_cou
     # Shifted beam results outside the result case loop - SQL transaction will occur only once at the end
     # rather than after every result case, which should enhance performance a bit.  May need to
     # adjust this in the future though, as the batch sizes might get too big to hold in memory all at once.
-    beam_results = []
+
     number_of_cases = primary_combo_count.value + secondary_combo_count.value
-    for result_case in range(1, number_of_cases + 1):
+    for case_number in range(1, number_of_cases + 1):
 
         case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
-        St7.St7GetResultCaseName(uID, result_case, case_name, St7.kMaxStrLen)
+        St7.St7GetResultCaseName(uID, case_number, case_name, St7.kMaxStrLen)
         print(f"Extracting beam forces for result case {case_name.value.decode()}...")
 
         for beam in range(1, nBeams.value + 1):
@@ -423,32 +770,21 @@ def extract_beam_forces(conn: Connection, cursor: Cursor, uID, primary_combo_cou
             positions = pos_array(*position_values_c)
 
             # Get the beam results using the Strand API
-            St7.St7GetBeamResultArrayPos(uID, St7.rtBeamForce, St7.stBeamLocal, beam, result_case,
+            St7.St7GetBeamResultArrayPos(uID, St7.rtBeamForce, St7.stBeamPrincipal, beam, case_number,
                                          num_stations_requested, positions, ctypes.byref(number_columns), forces)
 
             # Access the forces from each beam at each station position, and add these to the result list
             for i in range(num_stations_requested):
                 position = f"{position_values[i]:.2f}"
                 fx = forces[(i * 6) + St7.ipBeamAxialF]
-                fy = forces[(i * 6) + St7.ipBeamSFx]
-                fz = forces[(i * 6) + St7.ipBeamSFy]
+                fy = forces[(i * 6) + St7.ipBeamSF1]
+                fz = forces[(i * 6) + St7.ipBeamSF2]
                 mx = forces[(i * 6) + St7.ipBeamTorque]
-                my = forces[(i * 6) + St7.ipBeamBMy]
-                mz = forces[(i * 6) + St7.ipBeamBMx]
-                sid = f"{beam}-{result_case}-{position}"
-                result = (sid, beam, result_case, case_name.value.decode(), float(position), fx, fy, fz, mx, my, mz)
-                beam_results.append(result)
-
-        # Insert the beam force results into the database
-        if len(beam_results) == 0:
-            print("Warning: Beam force result set is empty.")
-        else:
-            # Implementing smarter batching
-            if result_case % 100 == 0 or result_case == number_of_cases:
-                insert_beam_forces(conn, cursor, beam_results)
-                beam_results.clear()
-
-    print("Beam force results written to DB.")
+                my = forces[(i * 6) + St7.ipBeamBM2]
+                mz = forces[(i * 6) + St7.ipBeamBM1]
+                sid = f"{beam}-{case_number}-{position}"
+                result = (sid, beam, case_number, case_name.value.decode(), float(position), fx, fy, fz, mx, my, mz)
+                yield result
 
 
 # Function to extract the beam displacement results
@@ -490,7 +826,7 @@ def extract_beam_displacements(conn: Connection, cursor: Cursor, uID, primary_co
             positions = pos_array(*position_values_c)
 
             # Get the beam results using the Strand API
-            St7.St7GetBeamResultArrayPos(uID, St7.rtBeamDisp, St7.stBeamLocal, beam, result_case,
+            St7.St7GetBeamResultArrayPos(uID, St7.rtBeamDisp, St7.stBeamPrincipal, beam, result_case,
                                          num_stations_requested, positions, ctypes.byref(number_columns), displacements)
 
             # Access the forces from each beam at each station position, and add these to the result list
@@ -512,52 +848,65 @@ def extract_beam_displacements(conn: Connection, cursor: Cursor, uID, primary_co
         else:
             # Implementing smarter batching
             if result_case % 100 == 0 or result_case == number_of_cases:
-                insert_beam_displacements(conn, cursor, beam_results)
+                sql_insert_beam_displacements(conn, cursor, beam_results)
                 beam_results.clear()
 
     print("Beam displacement results written to DB.")
 
 
 # Main function for extracting results
-def extract_model_data(model_file: str, result_file: str, db_fp: str, scratch_path: str):
+def extract_model_data(model_file: str, result_file: str, db_fp: str, scratch_path: str, parquet=False, directory=None):
 
-    with connect(db_fp) as conn:
+    # Initialize the Strand7 model
+    uID, primary_combo_count, secondary_combo_count = initialize_model(model_file, result_file, scratch_path)
+    
 
-        cursor = conn.cursor()
+    # Logic for creating the parquet files
+    if parquet:
+        parquet_insert_nodal_coordinates(uID, directory)
+        parquet_insert_nodal_reactions(uID, primary_combo_count, secondary_combo_count, directory)
+        parquet_insert_nodal_displacements(uID, primary_combo_count, secondary_combo_count, directory)
+        parquet_insert_beam_forces(uID, primary_combo_count, secondary_combo_count, directory)
+        parquet_insert_beam_properties(uID, directory)
 
-        # Ensure the database is ready
-        create_database(conn, cursor)
+    # If not running the parquet extraction, the program will extract to a SQLite db
+    else:
+        with connect(db_fp) as conn:
 
-        # Initialize the Strand7 model
-        uID, primary_combo_count, secondary_combo_count = initialize_model(model_file, result_file, scratch_path)
+            cursor = conn.cursor()
 
-        if uID is None:
-            pass
+            # Ensure the database is ready
+            create_sqlite_database(conn, cursor)
 
-        else:
+            if uID is None:
+                pass
 
-            # Extract nodal reactions and store them in the database
-            extract_nodal_reactions(conn, cursor, uID, primary_combo_count, secondary_combo_count)
+            else:
 
-            # Extract nodal displacements and store them in the database
-            extract_nodal_displacements(conn, cursor, uID, primary_combo_count, secondary_combo_count)
+                # Extract nodal reactions and store them in the database
+                extract_nodal_reactions(conn, cursor, uID, primary_combo_count, secondary_combo_count)
 
-            # Extract nodal coordinates and store them in the database
-            extract_nodal_coordinates(conn, cursor, uID)
+                # Extract nodal displacements and store them in the database
+                extract_nodal_displacements(conn, cursor, uID, primary_combo_count, secondary_combo_count)
 
-            # Extract the beam properties and store them in the database
-            extract_beam_properties(conn, cursor, uID)
+                # Extract nodal coordinates and store them in the database
+                extract_nodal_coordinates(conn, cursor, uID)
 
-            # Extract beam forces and store them in the database
-            extract_beam_forces(conn, cursor, uID, primary_combo_count, secondary_combo_count)
+                # Extract the beam properties and store them in the database
+                sql_insert_beam_properties(conn, cursor, uID)
 
-            # Extract beam displacements and store them in the database
-            extract_beam_displacements(conn, cursor, uID, primary_combo_count, secondary_combo_count)
+                # Extract beam forces and store them in the database
+                # Let's change the below logic to use a generator pattern instead
+                # This should be efficient
+                sql_insert_beam_forces(conn, cursor, uID, primary_combo_count, secondary_combo_count)
 
-            # Close the Strand7 model
-            St7.St7CloseResultFile(uID)
-            St7.St7CloseFile(uID)
-            St7.St7Release()
+                # Extract beam displacements and store them in the database
+                extract_beam_displacements(conn, cursor, uID, primary_combo_count, secondary_combo_count)
+
+                # Close the Strand7 model
+                St7.St7CloseResultFile(uID)
+                St7.St7CloseFile(uID)
+                St7.St7Release()
 
 
 if __name__ == '__main__':
@@ -568,9 +917,13 @@ if __name__ == '__main__':
     # 2. The model must be closed when running the script (can't be open in
     # the background as the script will access it using the API).
     # 3. If you have accidentally run the script while the model is open,
-    # make sure to delete the empty database file that it created before
+    # make sure to delete the empty database output_file that it created before
     # rerunning the script.
     # ----------------------------------------------------------------------
+
+    # Do you want it to extract in parquet format?
+    parquet = True
+    directory = pathlib.Path(r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.5\Parquet")
 
     # Create scratch path if not exists
     scratch_folder = f"C:\\Users\\{getuser()}\\Documents\\Changi T5_Database_Scratch"
@@ -579,13 +932,59 @@ if __name__ == '__main__':
 
     root = tk.Tk()
     root.withdraw()
-    model_file = filedialog.askopenfilename(title="Select your model file.")
-    result_file = filedialog.askopenfilename(title="Select your results file.")
+    model_file = filedialog.askopenfilename(title="Select your model output_file.")
+    result_file = filedialog.askopenfilename(title="Select your results output_file.")
 
-    # Provide the path for the output SQLite database file
+    # Provide the path for the output SQLite database output_file
     result_name = os.path.splitext(os.path.split(result_file)[1])[0]
     db_fp = filedialog.asksaveasfilename(title="Save Database File As", defaultextension=".db")
 
-    extract_model_data(model_file, result_file, db_fp, scratch_path=scratch_folder)
+    extract_model_data(model_file, result_file, db_fp, scratch_path=scratch_folder, parquet=parquet, directory=directory)
+
+    nla_dict = {
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\108 ALS Removal CHC1-T1.NLA": (
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\108 ALS Removal CHC1-T1.st7",
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\108 ALS Removal CHC1-T1_Parquet"),
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\109 ALS Removal CHC1-T2.NLA": (
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\109 ALS Removal CHC1-T2.st7",
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\109 ALS Removal CHC1-T2_Parquet"),
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\110 ALS Removal CHC1-T3.NLA": (
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\110 ALS Removal CHC1-T3.st7",
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\110 ALS Removal CHC1-T3_Parquet"),
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\111 ALS Removal CHC1-T4.NLA": (
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\111 ALS Removal CHC1-T4.st7",
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\111 ALS Removal CHC1-T4_Parquet"),
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\112 ALS Removal CHC1-B1.NLA": (
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\112 ALS Removal CHC1-B1.st7",
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\112 ALS Removal CHC1-B1_Parquet"),
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\113 ALS Removal CHC1-B2.NLA": (
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\113 ALS Removal CHC1-B2.st7",
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\113 ALS Removal CHC1-B2_Parquet"),
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\114 ALS Removal CHC1-B3.NLA": (
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\114 ALS Removal CHC1-B3.st7",
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\114 ALS Removal CHC1-B3_Parquet"),
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\115 ALS Removal CHC1-B4.NLA": (
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\115 ALS Removal CHC1-B4.st7",
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\115 ALS Removal CHC1-B4_Parquet"),
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\116 ALS Removal CHC1-D1.NLA": (
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\116 ALS Removal CHC1-D1.st7",
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\116 ALS Removal CHC1-D1_Parquet"),
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\117 ALS Removal CHC1-D2.NLA": (
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\117 ALS Removal CHC1-D2.st7",
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\117 ALS Removal CHC1-D2_Parquet"),
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\118 ALS Removal CHC1-D3.NLA": (
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\118 ALS Removal CHC1-D3.st7",
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\118 ALS Removal CHC1-D3_Parquet"),
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\119 ALS Removal CHC1-D4.NLA": (
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\119 ALS Removal CHC1-D4.st7",
+        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\119 ALS Removal CHC1-D4_Parquet")}
+
+    p = "Something"
+    #
+    # for k, v in nla_dict.items():
+    #     if not os.path.exists(v[1]):
+    #         os.mkdir(v[1])
+    #     extract_model_data(v[0], k, p, scratch_path=scratch_folder, parquet=parquet, directory=pathlib.Path(v[1]))
+    #     time.sleep(1)
 
 
