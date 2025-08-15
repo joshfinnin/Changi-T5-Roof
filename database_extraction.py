@@ -43,7 +43,16 @@ _BEAM_PROPERTIES_SCHEMA = pa.schema([
     ("Length", pa.float32()),
     ("PropertyName", pa.string()),
     ("GroupName", pa.string()),
-    ("BeamIDNumber", pa.int32())
+    ("BeamIDNumber", pa.int32()),
+    ("Dir1_X", pa.float32()),
+    ("Dir1_Y", pa.float32()),
+    ("Dir1_Z", pa.float32()),
+    ("Dir2_X", pa.float32()),
+    ("Dir2_Y", pa.float32()),
+    ("Dir2_Z", pa.float32()),
+    ("Dir3_X", pa.float32()),
+    ("Dir3_Y", pa.float32()),
+    ("Dir3_Z", pa.float32())
 ])
 
 _NODAL_REACTIONS_SCHEMA = pa.schema([
@@ -466,7 +475,7 @@ def parquet_insert_nodal_displacements(uID, primary_combo_count: ctypes.c_int, s
 
 def parquet_insert_beam_properties(uID, directory: pathlib.Path):
     """
-    Function for creating the parquet output_file for beam properties.
+    Function for creating the parquet cruciform_output_file for beam properties.
     :param uID:
     :param directory:
     :return:
@@ -479,8 +488,18 @@ def parquet_insert_beam_properties(uID, directory: pathlib.Path):
     property_names = []
     group_names = []
     beam_id_numbers = []
+    dir1_xs = []
+    dir1_ys = []
+    dir1_zs = []
+    dir2_xs = []
+    dir2_ys = []
+    dir2_zs = []
+    dir3_xs = []
+    dir3_ys = []
+    dir3_zs = []
 
-    lists_to_process = (beam_numbers, n1s, n2s, lengths, property_names, group_names, beam_id_numbers)
+    lists_to_process = (beam_numbers, n1s, n2s, lengths, property_names, group_names, beam_id_numbers,
+                        dir1_xs, dir1_ys, dir1_zs, dir2_xs, dir2_ys, dir2_zs, dir3_xs, dir3_ys, dir3_zs)
 
     with pq.ParquetWriter(directory / "beam_properties.parquet", SCHEMAS["BeamProperties"]) as writer:
 
@@ -494,6 +513,15 @@ def parquet_insert_beam_properties(uID, directory: pathlib.Path):
             property_names.append(r[4])  # Can I just get rid of the string casting that I did above?
             group_names.append(r[5])
             beam_id_numbers.append(r[6])
+            dir1_xs.append(r[7])
+            dir1_ys.append(r[8])
+            dir1_zs.append(r[9])
+            dir2_xs.append(r[10])
+            dir2_ys.append(r[11])
+            dir2_zs.append(r[12])
+            dir3_xs.append(r[13])
+            dir3_ys.append(r[14])
+            dir3_zs.append(r[15])
             counter += 1
             if counter % 50_000 == 0:
                 array = list(pa.array(data) for data in lists_to_process)
@@ -502,8 +530,7 @@ def parquet_insert_beam_properties(uID, directory: pathlib.Path):
                 _clear_lists(lists_to_process)
 
         # We write one last time for any remaining data in the lists
-        array = list(pa.array(data) for data in
-                     (beam_numbers, n1s, n2s, lengths, property_names, group_names, beam_id_numbers))
+        array = list(pa.array(data) for data in lists_to_process)
         table = pa.Table.from_arrays(array, schema=SCHEMAS["BeamProperties"])
         writer.write_table(table)
         _clear_lists(lists_to_process)
@@ -714,6 +741,11 @@ def extract_beam_properties(uID):
         St7.St7GetEntityGroup(uID, St7.tyBEAM, beam, ctypes.byref(group_id))
         St7.St7GetGroupIDName(uID, group_id, group_name, St7.kMaxStrLen)
 
+        # Access the beam axes data
+        axis_data = ctypes.c_double * 9
+        axis_array = axis_data()
+        St7.St7GetBeamAxisSystemInitial(uID, beam, axis_array)
+
         # Access the beam geometric data
         element_data = ctypes.c_double * 3
         element_data_array = element_data()
@@ -722,9 +754,19 @@ def extract_beam_properties(uID):
         node1 = connections[1]
         node2 = connections[2]
         length = element_data_array[0]
+        dir1_x = axis_array[0]
+        dir1_y = axis_array[1]
+        dir1_z = axis_array[2]
+        dir2_x = axis_array[3]
+        dir2_y = axis_array[4]
+        dir2_z = axis_array[5]
+        dir3_x = axis_array[6]
+        dir3_y = axis_array[7]
+        dir3_z = axis_array[8]
 
         result = (beam, node1, node2, length, property_name.value.decode(),
-                  group_name.value.decode(), id_number.value)
+                  group_name.value.decode(), id_number.value, dir1_x, dir1_y, dir1_z,
+                  dir2_x, dir2_y, dir2_z, dir3_x, dir3_y, dir3_z)
         yield result
 
 
@@ -859,7 +901,6 @@ def extract_model_data(model_file: str, result_file: str, db_fp: str, scratch_pa
 
     # Initialize the Strand7 model
     uID, primary_combo_count, secondary_combo_count = initialize_model(model_file, result_file, scratch_path)
-    
 
     # Logic for creating the parquet files
     if parquet:
@@ -903,10 +944,10 @@ def extract_model_data(model_file: str, result_file: str, db_fp: str, scratch_pa
                 # Extract beam displacements and store them in the database
                 extract_beam_displacements(conn, cursor, uID, primary_combo_count, secondary_combo_count)
 
-                # Close the Strand7 model
-                St7.St7CloseResultFile(uID)
-                St7.St7CloseFile(uID)
-                St7.St7Release()
+    # Close the Strand7 model
+    St7.St7CloseResultFile(uID)
+    St7.St7CloseFile(uID)
+    St7.St7Release()
 
 
 if __name__ == '__main__':
@@ -917,13 +958,13 @@ if __name__ == '__main__':
     # 2. The model must be closed when running the script (can't be open in
     # the background as the script will access it using the API).
     # 3. If you have accidentally run the script while the model is open,
-    # make sure to delete the empty database output_file that it created before
+    # make sure to delete the empty database cruciform_output_file that it created before
     # rerunning the script.
     # ----------------------------------------------------------------------
 
     # Do you want it to extract in parquet format?
     parquet = True
-    directory = pathlib.Path(r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.5\Parquet")
+    directory = pathlib.Path(r"C:\Users\Josh.Finnin\OneDrive - Arup\Desktop\ALS Versioning Factors\V1_4_4_ALS_Base_Parquet")
 
     # Create scratch path if not exists
     scratch_folder = f"C:\\Users\\{getuser()}\\Documents\\Changi T5_Database_Scratch"
@@ -932,59 +973,103 @@ if __name__ == '__main__':
 
     root = tk.Tk()
     root.withdraw()
-    model_file = filedialog.askopenfilename(title="Select your model output_file.")
-    result_file = filedialog.askopenfilename(title="Select your results output_file.")
+    model_file = filedialog.askopenfilename(title="Select your Strand7 model file.")
+    result_file = filedialog.askopenfilename(title="Select your Strand7 results file.")
 
-    # Provide the path for the output SQLite database output_file
+    # Provide the path for the output SQLite database cruciform_output_file
     result_name = os.path.splitext(os.path.split(result_file)[1])[0]
     db_fp = filedialog.asksaveasfilename(title="Save Database File As", defaultextension=".db")
 
     extract_model_data(model_file, result_file, db_fp, scratch_path=scratch_folder, parquet=parquet, directory=directory)
 
-    nla_dict = {
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\108 ALS Removal CHC1-T1.NLA": (
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\108 ALS Removal CHC1-T1.st7",
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\108 ALS Removal CHC1-T1_Parquet"),
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\109 ALS Removal CHC1-T2.NLA": (
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\109 ALS Removal CHC1-T2.st7",
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\109 ALS Removal CHC1-T2_Parquet"),
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\110 ALS Removal CHC1-T3.NLA": (
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\110 ALS Removal CHC1-T3.st7",
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\110 ALS Removal CHC1-T3_Parquet"),
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\111 ALS Removal CHC1-T4.NLA": (
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\111 ALS Removal CHC1-T4.st7",
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\111 ALS Removal CHC1-T4_Parquet"),
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\112 ALS Removal CHC1-B1.NLA": (
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\112 ALS Removal CHC1-B1.st7",
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\112 ALS Removal CHC1-B1_Parquet"),
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\113 ALS Removal CHC1-B2.NLA": (
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\113 ALS Removal CHC1-B2.st7",
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\113 ALS Removal CHC1-B2_Parquet"),
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\114 ALS Removal CHC1-B3.NLA": (
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\114 ALS Removal CHC1-B3.st7",
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\114 ALS Removal CHC1-B3_Parquet"),
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\115 ALS Removal CHC1-B4.NLA": (
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\115 ALS Removal CHC1-B4.st7",
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\115 ALS Removal CHC1-B4_Parquet"),
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\116 ALS Removal CHC1-D1.NLA": (
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\116 ALS Removal CHC1-D1.st7",
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\116 ALS Removal CHC1-D1_Parquet"),
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\117 ALS Removal CHC1-D2.NLA": (
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\117 ALS Removal CHC1-D2.st7",
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\117 ALS Removal CHC1-D2_Parquet"),
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\118 ALS Removal CHC1-D3.NLA": (
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\118 ALS Removal CHC1-D3.st7",
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\118 ALS Removal CHC1-D3_Parquet"),
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\119 ALS Removal CHC1-D4.NLA": (
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\119 ALS Removal CHC1-D4.st7",
-        r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\ALS\Output\119 ALS Removal CHC1-D4_Parquet")}
-
-    p = "Something"
-    #
-    # for k, v in nla_dict.items():
-    #     if not os.path.exists(v[1]):
-    #         os.mkdir(v[1])
-    #     extract_model_data(v[0], k, p, scratch_path=scratch_folder, parquet=parquet, directory=pathlib.Path(v[1]))
-    #     time.sleep(1)
+#     nla_dict = {
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\40 ALS Removal S-TR04-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\40 ALS Removal S-TR04-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\40 ALS Removal S-TR04-01_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\41 ALS Removal S-TR11-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\41 ALS Removal S-TR11-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\41 ALS Removal S-TR11-01_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\42 ALS Removal S-TR13-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\42 ALS Removal S-TR13-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\42 ALS Removal S-TR13-01_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\43 ALS Removal S-TR13-02.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\43 ALS Removal S-TR13-02.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\43 ALS Removal S-TR13-02_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\44 ALS Removal S-TR13-03.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\44 ALS Removal S-TR13-03.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\44 ALS Removal S-TR13-03_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\45 ALS Removal S-TR13-04.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\45 ALS Removal S-TR13-04.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\45 ALS Removal S-TR13-04_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\46 ALS Removal S-TR14-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\46 ALS Removal S-TR14-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\46 ALS Removal S-TR14-01_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\47 ALS Removal S-TR14-02.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\47 ALS Removal S-TR14-02.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\47 ALS Removal S-TR14-02_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\48 ALS Removal S-TR14-03.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\48 ALS Removal S-TR14-03.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\48 ALS Removal S-TR14-03_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\49 ALS Removal S-TR14-04.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\49 ALS Removal S-TR14-04.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\49 ALS Removal S-TR14-04_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\50 ALS Removal S-TR01-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\50 ALS Removal S-TR01-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\50 ALS Removal S-TR01-01_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\51 ALS Removal S-TR01-02.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\51 ALS Removal S-TR01-02.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\51 ALS Removal S-TR01-02_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\52 ALS Removal S-TR01a-05.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\52 ALS Removal S-TR01a-05.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\52 ALS Removal S-TR01a-05_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\53 ALS Removal S-TR01b-05.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\53 ALS Removal S-TR01b-05.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\53 ALS Removal S-TR01b-05_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\54 ALS Removal S-TR02-03.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\54 ALS Removal S-TR02-03.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\54 ALS Removal S-TR02-03_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\55 ALS Removal S-TR02a-05.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\55 ALS Removal S-TR02a-05.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\55 ALS Removal S-TR02a-05_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\56 ALS Removal S-TR02b-05.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\56 ALS Removal S-TR02b-05.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\56 ALS Removal S-TR02b-05_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\57 ALS Removal S-TR04-02.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\57 ALS Removal S-TR04-02.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\57 ALS Removal S-TR04-02_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\58 ALS Removal S-TR05-03.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\58 ALS Removal S-TR05-03.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\58 ALS Removal S-TR05-03_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\59 ALS Removal S-TR06-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\59 ALS Removal S-TR06-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\59 ALS Removal S-TR06-01_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\60 ALS Removal S-TR06-02.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\60 ALS Removal S-TR06-02.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\60 ALS Removal S-TR06-02_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\61 ALS Removal S-TR06-03.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\61 ALS Removal S-TR06-03.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\61 ALS Removal S-TR06-03_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\62 ALS Removal S-TR07-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\62 ALS Removal S-TR07-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\62 ALS Removal S-TR07-01_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\63 ALS Removal S-TR07-02.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\63 ALS Removal S-TR07-02.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\63 ALS Removal S-TR07-02_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\64 ALS Removal S-TR07-03.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\64 ALS Removal S-TR07-03.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\64 ALS Removal S-TR07-03_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\65 ALS Removal S-TR08-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\65 ALS Removal S-TR08-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\65 ALS Removal S-TR08-01_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\66 ALS Removal S-TR11-02.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\66 ALS Removal S-TR11-02.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\66 ALS Removal S-TR11-02_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\67 ALS Removal S-TR12-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\67 ALS Removal S-TR12-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\67 ALS Removal S-TR12-01_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\68 ALS Removal TR01a-04.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\68 ALS Removal TR01a-04.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\68 ALS Removal TR01a-04_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\69 ALS Removal TR01b-04.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\69 ALS Removal TR01b-04.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\69 ALS Removal TR01b-04_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\70 ALS Removal TR02a-04.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\70 ALS Removal TR02a-04.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\70 ALS Removal TR02a-04_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\71 ALS Removal TR02b-04.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\71 ALS Removal TR02b-04.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\71 ALS Removal TR02b-04_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\72 ALS Removal CHB1-T1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\72 ALS Removal CHB1-T1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\72 ALS Removal CHB1-T1_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\73 ALS Removal CHB1-T2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\73 ALS Removal CHB1-T2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\73 ALS Removal CHB1-T2_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\74 ALS Removal CHB1-T3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\74 ALS Removal CHB1-T3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\74 ALS Removal CHB1-T3_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\75 ALS Removal CHB1-T4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\75 ALS Removal CHB1-T4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\75 ALS Removal CHB1-T4_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\76 ALS Removal CHB1-B1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\76 ALS Removal CHB1-B1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\76 ALS Removal CHB1-B1_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\77 ALS Removal CHB1-B2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\77 ALS Removal CHB1-B2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\77 ALS Removal CHB1-B2_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\78 ALS Removal CHB1-B3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\78 ALS Removal CHB1-B3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\78 ALS Removal CHB1-B3_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\79 ALS Removal CHB1-B4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\79 ALS Removal CHB1-B4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\79 ALS Removal CHB1-B4_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\80 ALS Removal CHB1-D1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\80 ALS Removal CHB1-D1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\80 ALS Removal CHB1-D1_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\81 ALS Removal CHB1-D2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\81 ALS Removal CHB1-D2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\81 ALS Removal CHB1-D2_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\82 ALS Removal CHB1-D3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\82 ALS Removal CHB1-D3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\82 ALS Removal CHB1-D3_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\83 ALS Removal CHB1-D4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\83 ALS Removal CHB1-D4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\83 ALS Removal CHB1-D4_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\84 ALS Removal CHB2-T1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\84 ALS Removal CHB2-T1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\84 ALS Removal CHB2-T1_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\85 ALS Removal CHB2-T2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\85 ALS Removal CHB2-T2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\85 ALS Removal CHB2-T2_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\86 ALS Removal CHB2-T3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\86 ALS Removal CHB2-T3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\86 ALS Removal CHB2-T3_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\87 ALS Removal CHB2-T4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\87 ALS Removal CHB2-T4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\87 ALS Removal CHB2-T4_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\88 ALS Removal CHB2-B1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\88 ALS Removal CHB2-B1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\88 ALS Removal CHB2-B1_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\89 ALS Removal CHB2-B2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\89 ALS Removal CHB2-B2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\89 ALS Removal CHB2-B2_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\90 ALS Removal CHB2-B3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\90 ALS Removal CHB2-B3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\90 ALS Removal CHB2-B3_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\91 ALS Removal CHB2-B4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\91 ALS Removal CHB2-B4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\91 ALS Removal CHB2-B4_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\92 ALS Removal CHB2-D1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\92 ALS Removal CHB2-D1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\92 ALS Removal CHB2-D1_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\93 ALS Removal CHB2-D2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\93 ALS Removal CHB2-D2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\93 ALS Removal CHB2-D2_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\94 ALS Removal CHB2-D3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\94 ALS Removal CHB2-D3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\94 ALS Removal CHB2-D3_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\95 ALS Removal CHB2-D4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\95 ALS Removal CHB2-D4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\95 ALS Removal CHB2-D4_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\96 ALS Removal CHC2-T1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\96 ALS Removal CHC2-T1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\96 ALS Removal CHC2-T1_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\97 ALS Removal CHC2-T2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\97 ALS Removal CHC2-T2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\97 ALS Removal CHC2-T2_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\98 ALS Removal CHC2-T3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\98 ALS Removal CHC2-T3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\98 ALS Removal CHC2-T3_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\99 ALS Removal CHC2-T4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\99 ALS Removal CHC2-T4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\99 ALS Removal CHC2-T4_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\100 ALS Removal CHC2-B1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\100 ALS Removal CHC2-B1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\100 ALS Removal CHC2-B1_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\101 ALS Removal CHC2-B2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\101 ALS Removal CHC2-B2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\101 ALS Removal CHC2-B2_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\102 ALS Removal CHC2-B3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\102 ALS Removal CHC2-B3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\102 ALS Removal CHC2-B3_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\103 ALS Removal CHC2-B4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\103 ALS Removal CHC2-B4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\103 ALS Removal CHC2-B4_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\104 ALS Removal CHC2-D1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\104 ALS Removal CHC2-D1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\104 ALS Removal CHC2-D1_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\105 ALS Removal CHC2-D2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\105 ALS Removal CHC2-D2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\105 ALS Removal CHC2-D2_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\106 ALS Removal CHC2-D3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\106 ALS Removal CHC2-D3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\106 ALS Removal CHC2-D3_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\107 ALS Removal CHC2-D4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\107 ALS Removal CHC2-D4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\107 ALS Removal CHC2-D4_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\108 ALS Removal CHC1-T1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\108 ALS Removal CHC1-T1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\108 ALS Removal CHC1-T1_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\109 ALS Removal CHC1-T2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\109 ALS Removal CHC1-T2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\109 ALS Removal CHC1-T2_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\110 ALS Removal CHC1-T3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\110 ALS Removal CHC1-T3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\110 ALS Removal CHC1-T3_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\111 ALS Removal CHC1-T4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\111 ALS Removal CHC1-T4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\111 ALS Removal CHC1-T4_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\112 ALS Removal CHC1-B1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\112 ALS Removal CHC1-B1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\112 ALS Removal CHC1-B1_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\113 ALS Removal CHC1-B2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\113 ALS Removal CHC1-B2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\113 ALS Removal CHC1-B2_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\114 ALS Removal CHC1-B3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\114 ALS Removal CHC1-B3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\114 ALS Removal CHC1-B3_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\115 ALS Removal CHC1-B4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\115 ALS Removal CHC1-B4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\115 ALS Removal CHC1-B4_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\116 ALS Removal CHC1-D1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\116 ALS Removal CHC1-D1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\116 ALS Removal CHC1-D1_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\117 ALS Removal CHC1-D2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\117 ALS Removal CHC1-D2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\117 ALS Removal CHC1-D2_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\118 ALS Removal CHC1-D3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\118 ALS Removal CHC1-D3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\118 ALS Removal CHC1-D3_Parquet"),
+# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\119 ALS Removal CHC1-D4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\119 ALS Removal CHC1-D4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\119 ALS Removal CHC1-D4_Parquet")}
+#
+#     p = "Something"
+#
+#     for k, v in nla_dict.items():
+#         if not os.path.exists(v[1]):
+#             os.mkdir(v[1])
+#         extract_model_data(v[0], k, p, scratch_path=scratch_folder, parquet=parquet, directory=pathlib.Path(v[1]))
+#         time.sleep(1)
 
 
