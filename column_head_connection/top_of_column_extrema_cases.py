@@ -7,7 +7,7 @@ Refer to other scripts for the worst case node differential forces, and the wors
 
 import duckdb
 import csv
-from inputs import bf_ext_als_parq_files, bp_ext_als_parq_files, column_beam_number_dict
+from inputs import bf_ext_als_parq_files, bp_ext_als_parq_files, column_beam_number_dict, COL_HEAD_LOCATION, TOP_OF_COLUMN_EXTREMA_OUTPUT_FP
 
 
 def get_column_query(location: str, bf_parq_files: dict) -> str:
@@ -69,19 +69,15 @@ def get_column_query(location: str, bf_parq_files: dict) -> str:
 
 if __name__ == '__main__':
 
-    output_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head\C1 Loads\2025-08-03 C1 Column Head Connections_Column Worst Combinations_EXT_ALS.csv"
-
-    location = "C1"
-
     with duckdb.connect() as conn:
 
-        with open(output_fp, 'w+', newline='') as output_file:
+        with open(TOP_OF_COLUMN_EXTREMA_OUTPUT_FP, 'w+', newline='') as output_file:
             headers = ["BeamNumber", "ResultCaseName", "Model", "Fx", "Fy", "Fz", "Mx", "My", "Mz",
                        "Fxy", "Fxz", "Fyz", "Mxy", "Mxz", "Myz", "Fxyz", "Mxyz"]
             writer = csv.writer(output_file)
             writer.writerow(headers)
 
-            query = get_column_query(location, bf_ext_als_parq_files)
+            query = get_column_query(COL_HEAD_LOCATION, bf_ext_als_parq_files)
 
             results = conn.execute(query).fetchall()
             # for result in results:

@@ -1,7 +1,16 @@
 
 """Script containing the inputs for the different modules for the critical combination extraction."""
 
+
 from math import sin, cos, radians
+import pathlib
+
+COL_HEAD_LOCATION = "C1"
+
+output_folder_path = pathlib.Path(r"C:\Users\jason.le\Mott MacDonald\MBC SAM Project Portal - Main Leaf Column Head")
+
+TOP_OF_COLUMN_EXTREMA_OUTPUT_FP = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\{COL_HEAD_LOCATION} Column Head Connections_Column Worst Combinations.csv"
+
 
 bf_parq_files = {
     'LB_Gmax': 'C:\\Users\\Josh.Finnin\\Mott MacDonald\\MBC SAM Project Portal - 01-Structures\\Work\\Design\\05 - Roof\\01 - FE Models\\V1.4.4\\Global Axes Results\\V1_4_4_LB_Gmax_Parquet\\beam_forces.parquet',
