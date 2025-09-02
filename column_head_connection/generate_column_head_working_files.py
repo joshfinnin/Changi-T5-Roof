@@ -2,75 +2,89 @@
 
 import duckdb
 import logging
-from inputs import bp_parq_files, bf_ext_als_parq_files, bp_ext_als_parq_files, node_dict
-from inputs import excluded_beam_dict, target_groups, result_case_filter
+
+from inputs import (FULL_BEAM_FORCES_PARQUET, BEAM_ENDS_PARQUET, NODAL_FORCE_PARQUET, BEAM_PROPERTY_PARQUET)
+from inputs import (BF_PERM_PARQ_FILE_DICT, BP_PERM_PARQ_FILE_DICT,
+                    BF_EXT_ALS_PARQ_FILE_DICT, BP_EXT_ALS_PARQ_FILE_DICT, NODE_DICT)
+from inputs import EXCLUDED_BEAM_DICT, TARGET_GROUPS, RESULT_CASE_FILTER, COL_HEAD_LOCATION
 
 
 def configure_logging():
     logging.basicConfig(level=logging.INFO)
 
 
-def get_perm_beam_end_query(location: str, bp_parq_files: dict, node_dict: dict, target_groups: str,
+def get_perm_beam_end_query(location: str, bp_parq_file: str, node_dict: dict, target_groups: str,
                             excluded_beams: dict) -> str:
-    """Gets the SQL write_full_beam_forces_query for finding the relevant ends of the beam."""
+    """Gets the SQL write_full_beam_forces_query for finding the relevant ends of the beam.
+    Have updated the query to only pull the properties from a single model."""
 
-    models = bp_parq_files.keys()
+    models = BP_PERM_PARQ_FILE_DICT.keys()
 
     nodes = {m_name: node_dict[location] for m_name in models if "ALS" not in m_name}
 
     # This query needs to be updated
-    beam_end_query = " UNION ALL ".join(f"""
+    beam_end_query = f"""
     SELECT BeamNumber,
     0.0 AS BeamEnd,
     -1 AS Sign,
-    '{model}' as Model
-    FROM '{bp_parq}'
-    WHERE N1 IN {nodes[model]}
+    FROM '{bp_parq_file}'
+    WHERE N1 IN {nodes}
     AND GroupName IN {target_groups}
-    AND BeamNumber NOT IN {excluded_beams[model][location]}
+    AND BeamNumber NOT IN {excluded_beams[location]}
 
     UNION ALL
 
     SELECT BeamNumber,
     1.0 AS BeamEnd,
     1 AS Sign,
-    '{model}' as Model
-    FROM '{bp_parq}' 
-    WHERE N2 IN {nodes[model]}
+    FROM '{bp_parq_file}' 
+    WHERE N2 IN {nodes}
     AND GroupName IN {target_groups}
-    AND BeamNumber NOT IN {excluded_beams[model][location]}""" for model, bp_parq in bp_parq_files.items())
+    AND BeamNumber NOT IN {excluded_beams[location]}"""
 
     return beam_end_query
 
 
-def get_full_beam_properties_query(bp_parq_files: dict, target_groups: str) -> str:
+def get_full_beam_properties_query(bp_parq_file: str, target_groups: str) -> str:
     """Function to get the properties corresponding to each and every beam from the different bf_parqs."""
 
-    property_query = " UNION ALL ".join(f"""SELECT
-    BeamNumber, GroupName, '{model}' AS Model, N1, N2
-    FROM '{bp_parq_files[model]}'
-    WHERE GroupName IN {target_groups}""" for model in bp_parq_files.keys())
+    property_query = f"""SELECT
+    BeamNumber, GroupName, N1, N2
+    FROM '{bp_parq_file}'
+    WHERE GroupName IN {target_groups}"""
 
     return property_query
 
 
-def get_full_beam_force_query(location: str, bf_parq_files: dict, bp_parq_files: dict,
-                              excluded_beams: dict, target_groups: str, result_case_filter: str) -> str:
+def get_full_beam_force_query(bf_perm_parq_files: dict, bf_als_parq_files: dict,
+                              beam_numbers: tuple, target_groups: str, result_case_filter: str) -> str:
     """Gets the full set of beam forces for beams from the series of bf_parqs, using filtering criteria."""
 
-    prequery = "\n UNION ALL ".join(f"SELECT "
+    # First query the permanent models for the end forces that occur for our target beams
+    perm_prequery = "\n UNION ALL ".join(f"SELECT "
                                     f"BeamNumber, ResultCaseName, ResultCase, Position, '{model_name}' AS Model, "
-                                    f"Fx, Fy, Fz, Mx, My, Mz FROM '{bf_parq_files[model_name]}' "
+                                    f"Fx, Fy, Fz, Mx, My, Mz FROM '{bf_perm_parq_file}' "
                                     f"WHERE Position IN (0.0, 1.0) AND ResultCaseName NOT LIKE '%BIF%'"
-                                    f"AND BeamNumber NOT IN {excluded_beams[model_name][location]}" for model_name in
-                                    bf_parq_files)
+                                    f"AND BeamNumber IN {beam_numbers}" for model_name,
+                                    bf_perm_parq_file in bf_perm_parq_files.items())
+
+    # Second query the als models for the end forces that occur for our target beams
+    # (based on BeamID rather than on BeamNumber)
+    als_prequery = "\n UNION ALL ".join(f"""SELECT
+                                            BeamIDNumber AS BeamNumber, ResultCaseName, ResultCase, Position, 
+                                            '{model_name}' AS Model, Fx, Fy, Fz, Mx, My, Mz 
+                                            FROM '{bf_als_parq_file}'
+                                            WHERE Position IN (0.0, 1.0) AND ResultCaseName NOT LIKE '%BIF%'
+                                            AND BeamIDNumber IN {beam_numbers}""" for model_name,
+                                            bf_als_parq_file in bf_als_parq_files.items())
+
+    prequery = perm_prequery + "\n UNION ALL \n" + als_prequery
 
     full_beam_force_query = f"""SELECT BF.BeamNumber, ResultCaseName, ResultCase, Position, 
     BF.Model, Fx, Fy, Fz, Mx, My, Mz 
     FROM ({prequery}) AS BF 
     JOIN FULL_BEAM_PROPERTIES AS BP ON BF.BeamNumber = BP.BeamNumber 
     AND BP.Model = BF.Model 
-    WHERE BF.BeamNumber IN (SELECT DISTINCT BeamNumber FROM BEAM_ENDS)
     AND ResultCaseName NOT LIKE '%BIF%'
     AND ResultCaseName NOT IN {result_case_filter}
     AND BP.GroupName IN {target_groups}"""
@@ -101,9 +115,7 @@ def get_nodal_beam_force_query() -> str:
     return nodal_beam_force_query
 
 
-locations = ("B1", "B2", "C1", "C2")
-
-model_element_dict = {model_name: [] for model_name in bp_parq_files.keys()}
+model_element_dict = {model_name: [] for model_name in BP_PERM_PARQ_FILE_DICT.keys()}
 
 if __name__ == '__main__':
 
@@ -112,26 +124,14 @@ if __name__ == '__main__':
 
     with duckdb.connect() as conn:
         log.info("DuckDB database created.")
-        # ----------------------------------------------------------------------
-        # INPUTS
-        # ----------------------------------------------------------------------
-
-        location = "C1"
-        beam_forces_parquet_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head\C1 Loads\full_beam_forces_ext_als.parquet"
-        property_parquet_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head\C1 Loads\full_beam_properties_ext_als.parquet"
-        beam_ends_parquet_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head\C1 Loads\beam_ends_ext_als.parquet"
-        nodal_force_parquet_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head\C1 Loads\full_nodal_forces_ext_als.parquet"
 
         # ----------------------------------------------------------------------
         # SUBQUERY COMPONENTS
         # ----------------------------------------------------------------------
-        beam_end_query = get_perm_beam_end_query(location, bp_ext_als_parq_files, node_dict, target_groups,
-                                                 excluded_beam_dict)
+        beam_end_query = get_perm_beam_end_query(COL_HEAD_LOCATION, BP_PERM_PARQ_FILE_DICT["LB_Gmax"], NODE_DICT,
+                                                 TARGET_GROUPS, EXCLUDED_BEAM_DICT)
 
-        property_query = get_full_beam_properties_query(bp_ext_als_parq_files, target_groups)
-
-        full_beam_force_query = get_full_beam_force_query(location, bf_ext_als_parq_files, bp_ext_als_parq_files,
-                                                          excluded_beam_dict, target_groups, result_case_filter)
+        property_query = get_full_beam_properties_query(BP_PERM_PARQ_FILE_DICT["LB_Gmax"], TARGET_GROUPS)
 
         full_nodal_beam_force_query = get_nodal_beam_force_query()
 
@@ -139,13 +139,25 @@ if __name__ == '__main__':
         # MAIN QUERIES
         # ----------------------------------------------------------------------
         log.info("Generating SQL queries...")
+
+        beam_ends_query = f"""CREATE TABLE BEAM_ENDS AS ({beam_end_query});"""
+
+        conn.execute(beam_ends_query)
+        # Collect the beam numbers from the beam ends table
+        beam_numbers = tuple(b[0] for b in conn.execute("""SELECT BeamNumber FROM BEAM_ENDS;""").fetchall())
+
+        # Querying the beam numbers first facilitates predicate pushdown as I can inject the values as literals
+        # So the subsequent queries should execute significantly faster
+        full_beam_force_query = get_full_beam_force_query(BF_PERM_PARQ_FILE_DICT, BP_EXT_ALS_PARQ_FILE_DICT,
+                                                          beam_numbers, TARGET_GROUPS, RESULT_CASE_FILTER)
+
+
         write_full_beam_forces_query = f"""CREATE TABLE FULL_BEAM_FORCES AS
-                    WITH BEAM_ENDS AS ({beam_end_query}),
                     FULL_BEAM_PROPERTIES AS ({property_query})
                     {full_beam_force_query};
 
                     COPY FULL_BEAM_FORCES
-                    TO '{beam_forces_parquet_fp}'
+                    TO '{FULL_BEAM_FORCES_PARQUET}'
                     (FORMAT PARQUET);
                     """
 
@@ -153,24 +165,21 @@ if __name__ == '__main__':
                     {property_query};
 
                     COPY FULL_BEAM_PROPERTIES
-                    TO '{property_parquet_fp}'
+                    TO '{BEAM_PROPERTY_PARQUET}'
                     (FORMAT PARQUET);"""
 
         write_beam_ends_query = f"""CREATE TABLE BEAM_ENDS AS 
                     {beam_end_query};
 
                     COPY BEAM_ENDS
-                    TO '{beam_ends_parquet_fp}'
+                    TO '{BEAM_ENDS_PARQUET}'
                     (FORMAT PARQUET);"""
 
-        write_nodal_force_query = f"""CREATE TABLE FULL_NODAL_FORCES AS 
-                    WITH BEAM_ENDS AS (SELECT * FROM '{beam_ends_parquet_fp}'),
-                    FULL_BEAM_PROPERTIES AS (SELECT * FROM '{property_parquet_fp}'),
-                    FULL_BEAM_FORCES AS (SELECT * FROM '{beam_forces_parquet_fp}')
+        write_nodal_force_query = f"""CREATE TABLE FULL_NODAL_FORCES AS
                     {full_nodal_beam_force_query};
 
                     COPY FULL_NODAL_FORCES
-                    TO '{nodal_force_parquet_fp}'
+                    TO '{NODAL_FORCE_PARQUET}'
                     (FORMAT PARQUET);"""
 
         # ----------------------------------------------------------------------

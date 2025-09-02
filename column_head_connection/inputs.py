@@ -5,30 +5,36 @@
 from math import sin, cos, radians
 import pathlib
 
+
+# ----------------------------------------------------------------------
+# MASTER FILE INPUTS AND LOCATION DATA
+# ----------------------------------------------------------------------
 COL_HEAD_LOCATION = "C1"
 
-output_folder_path = pathlib.Path(r"C:\Users\jason.le\Mott MacDonald\MBC SAM Project Portal - Main Leaf Column Head")
+output_folder_path = pathlib.Path(r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head")
 
+FULL_BEAM_FORCES_PARQUET = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\full_beam_forces.parquet"
+BEAM_PROPERTY_PARQUET = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\full_beam_properties.parquet"
+BEAM_ENDS_PARQUET = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\beams_ends.parquet"
+NODAL_FORCE_PARQUET = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\full_nodal_forces.parquet"
 TOP_OF_COLUMN_EXTREMA_OUTPUT_FP = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\{COL_HEAD_LOCATION} Column Head Connections_Column Worst Combinations.csv"
 
-
-bf_parq_files = {
+# ----------------------------------------------------------------------
+# INPUT PARQUET FILES (FORCES AND PROPERTIES)
+# ----------------------------------------------------------------------
+BF_PERM_PARQ_FILE_DICT = {
     'LB_Gmax': 'C:\\Users\\Josh.Finnin\\Mott MacDonald\\MBC SAM Project Portal - 01-Structures\\Work\\Design\\05 - Roof\\01 - FE Models\\V1.4.4\\Global Axes Results\\V1_4_4_LB_Gmax_Parquet\\beam_forces.parquet',
     'LB_Gmin': 'C:\\Users\\Josh.Finnin\\Mott MacDonald\\MBC SAM Project Portal - 01-Structures\\Work\\Design\\05 - Roof\\01 - FE Models\\V1.4.4\\Global Axes Results\\V1_4_4_LB_Gmin_Parquet\\beam_forces.parquet',
     'UB_Gmax': 'C:\\Users\\Josh.Finnin\\Mott MacDonald\\MBC SAM Project Portal - 01-Structures\\Work\\Design\\05 - Roof\\01 - FE Models\\V1.4.4\\Global Axes Results\\V1_4_4_UB_Gmax_Parquet\\beam_forces.parquet',
     'UB_Gmin': 'C:\\Users\\Josh.Finnin\\Mott MacDonald\\MBC SAM Project Portal - 01-Structures\\Work\\Design\\05 - Roof\\01 - FE Models\\V1.4.4\\Global Axes Results\\V1_4_4_UB_Gmin_Parquet\\beam_forces.parquet'}
 
-bp_parq_files = {
+BP_PERM_PARQ_FILE_DICT = {
     'LB_Gmax': 'C:\\Users\\Josh.Finnin\\Mott MacDonald\\MBC SAM Project Portal - 01-Structures\\Work\\Design\\05 - Roof\\01 - FE Models\\V1.4.4\\Global Axes Results\\V1_4_4_LB_Gmax_Parquet\\beam_properties.parquet',
     'LB_Gmin': 'C:\\Users\\Josh.Finnin\\Mott MacDonald\\MBC SAM Project Portal - 01-Structures\\Work\\Design\\05 - Roof\\01 - FE Models\\V1.4.4\\Global Axes Results\\V1_4_4_LB_Gmin_Parquet\\beam_properties.parquet',
     'UB_Gmax': 'C:\\Users\\Josh.Finnin\\Mott MacDonald\\MBC SAM Project Portal - 01-Structures\\Work\\Design\\05 - Roof\\01 - FE Models\\V1.4.4\\Global Axes Results\\V1_4_4_UB_Gmax_Parquet\\beam_properties.parquet',
     'UB_Gmin': 'C:\\Users\\Josh.Finnin\\Mott MacDonald\\MBC SAM Project Portal - 01-Structures\\Work\\Design\\05 - Roof\\01 - FE Models\\V1.4.4\\Global Axes Results\\V1_4_4_UB_Gmin_Parquet\\beam_properties.parquet'}
 
-bf_ext_als_parq_files = {
-    "LB_Gmax": r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\Global Axes Results\V1_4_4_LB_Gmax_Parquet\beam_forces.parquet",
-    "LB_Gmin": r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\Global Axes Results\V1_4_4_LB_Gmin_Parquet\beam_forces.parquet",
-    "UB_Gmax": r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\Global Axes Results\V1_4_4_UB_Gmax_Parquet\beam_forces.parquet",
-    "UB_Gmin": r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\Global Axes Results\V1_4_4_UB_Gmin_Parquet\beam_forces.parquet",
+BF_EXT_ALS_PARQ_FILE_DICT = {
     "0 ALS Removal P-TR01a-01": r"D:\Projects\Changi T5\MUC\Strand7 Model Data\0 ALS Removal P-TR01a-01_GlobalParquet\beam_forces.parquet",
     "1 ALS Removal P-TR01a-02": r"D:\Projects\Changi T5\MUC\Strand7 Model Data\1 ALS Removal P-TR01a-02_GlobalParquet\beam_forces.parquet",
     "10 ALS Removal P-TR02b-02": r"D:\Projects\Changi T5\MUC\Strand7 Model Data\10 ALS Removal P-TR02b-02_GlobalParquet\beam_forces.parquet",
@@ -102,11 +108,7 @@ bf_ext_als_parq_files = {
     "9 ALS Removal P-TR02b-01": r"D:\Projects\Changi T5\MUC\Strand7 Model Data\9 ALS Removal P-TR02b-01_GlobalParquet\beam_forces.parquet",
 }
 
-bp_ext_als_parq_files = {
-    "LB_Gmax": r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\Global Axes Results\V1_4_4_LB_Gmax_Parquet\beam_properties.parquet",
-    "LB_Gmin": r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\Global Axes Results\V1_4_4_LB_Gmin_Parquet\beam_properties.parquet",
-    "UB_Gmax": r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\Global Axes Results\V1_4_4_UB_Gmax_Parquet\beam_properties.parquet",
-    "UB_Gmin": r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\Global Axes Results\V1_4_4_UB_Gmin_Parquet\beam_properties.parquet",
+BP_EXT_ALS_PARQ_FILE_DICT = {
     "0 ALS Removal P-TR01a-01": r"D:\Projects\Changi T5\MUC\Strand7 Model Data\0 ALS Removal P-TR01a-01_GlobalParquet\beam_properties.parquet",
     "1 ALS Removal P-TR01a-02": r"D:\Projects\Changi T5\MUC\Strand7 Model Data\1 ALS Removal P-TR01a-02_GlobalParquet\beam_properties.parquet",
     "10 ALS Removal P-TR02b-02": r"D:\Projects\Changi T5\MUC\Strand7 Model Data\10 ALS Removal P-TR02b-02_GlobalParquet\beam_properties.parquet",
@@ -181,6 +183,9 @@ bp_ext_als_parq_files = {
     "9 ALS Removal P-TR02b-01": r"D:\Projects\Changi T5\MUC\Strand7 Model Data\9 ALS Removal P-TR02b-01_GlobalParquet\beam_properties.parquet",
 }
 
+# ----------------------------------------------------------------------
+# COLUMN NUMBERS AND NODE NUMBERS
+# ----------------------------------------------------------------------
 column_beam_number_dict = {'B1': 2652, 'B2': 2665, 'C1': 2662, 'C2': 2663}
 
 B1_node_force_cos_ang_dict = {1811: cos(radians(315)), 1748: cos(radians(315)),
@@ -193,47 +198,40 @@ B1_node_force_sin_ang_dict = {1811: sin(radians(315)), 1748: sin(radians(315)),
                               1670: sin(radians(135)), 1609: sin(radians(135)),
                               3059: sin(radians(45)), 1672: sin(radians(45))}
 
-
 B2_node_force_cos_ang_dict = {899: cos(radians(315)), 823: cos(radians(315)),
                               835: cos(radians(225)), 770: cos(radians(225)),
                               779: cos(radians(135)), 714: cos(radians(135)),
                               843: cos(radians(45)), 768: cos(radians(45))}
-
 
 B2_node_force_sin_ang_dict = {899: sin(radians(315)), 823: sin(radians(315)),
                               835: sin(radians(225)), 770: sin(radians(225)),
                               779: sin(radians(135)), 714: sin(radians(135)),
                               843: sin(radians(45)), 768: sin(radians(45))}
 
-
 C1_node_force_cos_ang_dict = {2753: cos(radians(315)), 2719: cos(radians(315)),
                               2721: cos(radians(225)), 2680: cos(radians(225)),
                               2690: cos(radians(135)), 2644: cos(radians(135)),
                               2726: cos(radians(45)), 2691: cos(radians(45))}
-
 
 C1_node_force_sin_ang_dict = {2753: sin(radians(315)), 2719: sin(radians(315)),
                               2721: sin(radians(225)), 2680: sin(radians(225)),
                               2690: sin(radians(135)), 2644: sin(radians(135)),
                               2726: sin(radians(45)), 2691: sin(radians(45))}
 
-
 C2_node_force_cos_ang_dict = {2140: cos(radians(315)), 2073: cos(radians(315)),
                               3058: cos(radians(225)), 2015: cos(radians(225)),
                               2028: cos(radians(135)), 1950: cos(radians(135)),
                               2094: cos(radians(45)), 2024: cos(radians(45))}
-
 
 C2_node_force_sin_ang_dict = {2140: sin(radians(315)), 2073: sin(radians(315)),
                               3058: sin(radians(225)), 2015: sin(radians(225)),
                               2028: sin(radians(135)), 1950: sin(radians(135)),
                               2094: sin(radians(45)), 2024: sin(radians(45))}
 
+node_cos_ang_dicts = {m: {} for m in BF_PERM_PARQ_FILE_DICT.keys()}
+node_sin_ang_dicts = {m: {} for m in BF_PERM_PARQ_FILE_DICT.keys()}
 
-node_cos_ang_dicts = {m: {} for m in bf_parq_files.keys()}
-node_sin_ang_dicts = {m: {} for m in bf_parq_files.keys()}
-
-for model in bp_parq_files.keys():
+for model in BP_PERM_PARQ_FILE_DICT.keys():
     node_cos_ang_dicts[model]["B1"] = B1_node_force_cos_ang_dict
     node_sin_ang_dicts[model]["B1"] = B1_node_force_sin_ang_dict
 
@@ -247,7 +245,7 @@ for model in bp_parq_files.keys():
     node_sin_ang_dicts[model]["C2"] = C2_node_force_sin_ang_dict
 
 
-node_dict = {"B1": (1715, 1782, 1788, 1852, 1709, 17761, 1644, 1707),
+NODE_DICT = {"B1": (1715, 1782, 1788, 1852, 1709, 17761, 1644, 1707),
              "B2": (794, 726, 791, 21153, 867, 809, 875, 931),
              "C1": (2749, 2791, 2789, 2823, 21152, 2796, 2705, 2760),
              "C2": (2066, 17744, 2131, 2198, 2079, 2152, 1993, 2083)}
@@ -297,21 +295,27 @@ node_pairs_for_differential = {
             "C1": {"Set 1": [], "Set 2": []},
             "C2": {"Set 1": [], "Set 2": []}}}
 
-excluded_beam_dict = {
+# ----------------------------------------------------------------------
+# BEAMS AND GROUPS TO EXCLUDE FROM THE FORCE SUMMATION
+# ----------------------------------------------------------------------
+EXCLUDED_BEAM_DICT = {
                 "B1": (823, 825, 827, 828, 834, 835, 838, 839, 6278, 6324, 6328, 6549, 6580, 6602, 6613, 6614),
                 "B2": (1097, 1101, 1104, 1105, 1197, 1203, 1204, 1205, 6419, 6430, 6534, 6538, 6604, 6605, 6606, 6636),
                 "C1": (719, 720, 721, 722, 747, 750, 751, 752, 6288, 6309, 6441, 6594, 6621, 6623, 6633, 6635),
                 "C2": (911, 913, 914, 915, 997, 999, 1000, 1001, 6352, 6375, 6386, 6517, 6530, 6560, 6561, 6583)}
 
-target_groups = ("'Leaf 03-07\\03-07\\1D\\G01 PrimaryTop'",
+TARGET_GROUPS = ("'Leaf 03-07\\03-07\\1D\\G01 PrimaryTop'",
                  "'Leaf 03-07\\03-07\\1D\\G02 PrimaryBot'",
                  "'Leaf 03-07\\03-07\\1D\\G03 PrimaryDiag'",
                  "'Leaf 03-07\\03-07\\1D\\G04 PrimaryVert'",
                  "'Leaf 03-07\\03-07\\1D\\G27 BracingPlanTop'",
                  "'Leaf 03-07\\03-07\\1D\\G28 BracingPlanBot'")
 
-target_groups = f"({', '.join(g for g in target_groups)})"
+TARGET_GROUPS = f"({', '.join(g for g in TARGET_GROUPS)})"
 
+# ----------------------------------------------------------------------
+# RESULT CASES TO IGNORE
+# ----------------------------------------------------------------------
 result_cases_to_ignore = ["'1: 1a [1a][U]'", "'2: 1b(0) [1b][M]'",
                           "'3: 1b [1b][M]'", "'1012: 1b [1b][M]'",
                           "'1013: 2&3(0) [2+3][M]'", "'1014: 2&3 [2+3][M]'",
@@ -320,4 +324,4 @@ result_cases_to_ignore = ["'1: 1a [1a][U]'", "'2: 1b(0) [1b][M]'",
                           "'677: 2&3 [2+3][M]'", "'678: 2&3(0) [2+3][M]'",
                           "'679: S2_Gmin [2+3][M]'"]
 
-result_case_filter = f"({', '.join(result_cases_to_ignore)})"
+RESULT_CASE_FILTER = f"({', '.join(result_cases_to_ignore)})"
