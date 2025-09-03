@@ -4,7 +4,7 @@ Takes a series of load combinations and outputs the loads for each fictitious el
 
 import duckdb
 from column_head_connection.nodal_and_cruciform_reactions import get_direction_coefficients
-from inputs import bf_ext_als_parq_files, bp_ext_als_parq_files, node_dict, result_cases_to_ignore
+from inputs import BF_EXT_ALS_PARQ_FILE_DICT, BP_EXT_ALS_PARQ_FILE_DICT, node_dict, result_cases_to_ignore, FULL_BEAM_FORCES_PARQUET, BEAM_ENDS_PARQUET, NODAL_FORCE_PARQUET, ordering_dicts
 import csv
 
 
@@ -29,96 +29,9 @@ headers = ["ResultCase", "Node", "ResultCaseName", "Model", "Combination",
            "Vxy", "Vxz", "Vyz", "Mxy", "Mxz", "Myz",
            "Vxyz", "Mxyz", "IS Member"]
 
-B1_ordering_dict = {1811: ("Top 1", 1),
-                    1748: ("Btm 1", 2),
-                    1742: ("Top 2", 3),
-                    1678: ("Btm 2", 4),
-                    1670: ("Top 3", 5),
-                    1609: ("Btm 3", 6),
-                    3059: ("Top 4", 7),
-                    1672: ("Btm 4", 8)}
-
-B1_ALS_ordering_dict = {1852: ("Top 1", 1),
-                        1788: ("Btm 1", 2),
-                        1782: ("Top 2", 3),
-                        1715: ("Btm 2", 4),
-                        1707: ("Top 3", 5),
-                        1644: ("Btm 3", 6),
-                        17761: ("Top 4", 7),
-                        1709: ("Btm 4", 8)}
-
-B2_ordering_dict = {899: ("Top 1", 2),
-                    823: ("Btm 1", 1),
-                    835: ("Top 2", 3),
-                    770: ("Btm 2", 4),
-                    779: ("Top 3", 5),
-                    714: ("Btm 3", 6),
-                    843: ("Top 4", 7),
-                    768: ("Btm 4", 8)}
-
-B2_ALS_ordering_dict = {931: ("Top 1", 2),
-                        21165: ("Btm 1", 1),
-                        867: ("Top 2", 3),
-                        794: ("Btm 2", 4),
-                        809: ("Top 3", 5),
-                        726: ("Btm 3", 6),
-                        875: ("Top 4", 7),
-                        791: ("Btm 4", 8)}
-
-C1_ordering_dict = {2753: ("Top 1", 2),
-                    2719: ("Btm 1", 1),
-                    2721: ("Top 2", 3),
-                    2680: ("Btm 2", 4),
-                    2690: ("Top 3", 5),
-                    2644: ("Btm 3", 6),
-                    2726: ("Top 4", 7),
-                    2691: ("Btm 4", 8)}
-
-C1_ALS_ordering_dict = {2824: ("Top 1", 2),
-                        2790: ("Btm 1", 1),
-                        2792: ("Top 2", 3),
-                        2750: ("Btm 2", 4),
-                        2761: ("Top 3", 5),
-                        2706: ("Btm 3", 6),
-                        2797: ("Top 4", 7),
-                        21163: ("Btm 4", 8)}
-
-C2_ordering_dict = {2140: ("Top 1", 1),
-                    2073: ("Btm 1", 2),
-                    3058: ("Top 2", 3),
-                    2015: ("Btm 2", 4),
-                    2028: ("Top 3", 5),
-                    1950: ("Btm 3", 6),
-                    2094: ("Top 4", 7),
-                    2024: ("Btm 4", 8)}
-
-C2_ALS_ordering_dict = {2199: ("Top 1", 1),
-                        2131: ("Btm 1", 2),
-                        17744: ("Top 2", 3),
-                        2066: ("Btm 2", 4),
-                        2083: ("Top 3", 5),
-                        1993: ("Btm 3", 6),
-                        2153: ("Top 4", 7),
-                        2079: ("Btm 4", 8)}
-
-ordering_dicts = {"B1": B1_ordering_dict,
-                  "B1_ALS": B1_ALS_ordering_dict,
-                  "B2": B2_ordering_dict,
-                  "B2_ALS": B2_ALS_ordering_dict,
-                  "C1": C1_ordering_dict,
-                  "C1_ALS": C1_ALS_ordering_dict,
-                  "C2": C2_ordering_dict,
-                  "C2_ALS": C2_ALS_ordering_dict}
-
 
 if __name__ == '__main__':
-
-    fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head\B2 Loads\2025-08-03 IdeaStatiCa Load Table.csv"
-    beam_forces_parquet_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head\B2 Loads\full_beam_forces_ext_als.parquet"
-    property_parquet_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head\B2 Loads\full_beam_properties_ext_als.parquet"
-    beam_ends_parquet_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head\B2 Loads\beam_ends_ext_als.parquet"
-    nodal_force_parquet_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head\B2 Loads\full_nodal_forces_ext_als.parquet"
-
+    
     # The below load combinations are to be entered manually from the studies on the worst combinations
     B1_target_combinations = [
         ("'1301: S2_Gmax + Ld(Wind Y Pos Down) + Ac(LL + T (+ve) + EHF +Y) [2+3][M]'", "'LB_Gmax'"),
@@ -305,14 +218,14 @@ if __name__ == '__main__':
                            zip(target_combinations, range(1, len(target_combinations) + 1))}
 
     with duckdb.connect() as conn:
-        direction_coefficients = get_direction_coefficients(location, bp_ext_als_parq_files)
+        direction_coefficients = get_direction_coefficients(location, BP_EXT_ALS_PARQ_FILE_DICT)
         combination_string = ", ".join(f"({c}, {m})" for c, m in target_combinations)
         combination_filter_query = f"""SELECT * FROM (VALUES {combination_string}) AS COMBOS(ResultCaseName, Model)"""
-        nodal_force_query = " UNION ALL ".join(f"""SELECT * FROM '{nodal_force_parquet_fp}' 
-        WHERE Node IN {node_dict[get_ordering_key(model, location)]} AND Model = '{model}'""" for model in bf_ext_als_parq_files)
+        nodal_force_query = " UNION ALL ".join(f"""SELECT * FROM '{NODAL_FORCE_PARQUET}' 
+        WHERE Node IN {node_dict[get_ordering_key(model, location)]} AND Model = '{model}'""" for model in BF_EXT_ALS_PARQ_FILE_DICT)
 
-        query = f"""WITH FULL_BEAM_FORCES AS (SELECT * FROM '{beam_forces_parquet_fp}'),
-        BEAM_ENDS AS (SELECT * FROM '{beam_ends_parquet_fp}'),
+        query = f"""WITH FULL_BEAM_FORCES AS (SELECT * FROM '{FULL_BEAM_FORCES_PARQUET}'),
+        BEAM_ENDS AS (SELECT * FROM '{BEAM_ENDS_PARQUET}'),
         NODAL_BEAM_FORCES AS ({nodal_force_query}),
         COMBINATIONS AS ({combination_filter_query}),
         COMBO_RESULTS AS

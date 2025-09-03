@@ -167,7 +167,7 @@ if __name__ == '__main__':
         # So the subsequent queries should execute significantly faster
         full_beam_force_query = get_full_beam_force_query(BF_PERM_PARQ_FILE_DICT, BF_EXT_ALS_PARQ_FILE_DICT,
                                                           BP_EXT_ALS_PARQ_FILE_DICT, beam_numbers, TARGET_GROUPS,
-                                                          RESULT_CASE_FILTER)
+                                                          RESULT_CASE_FILTER, als_only=ALS_ONLY)
 
 
         write_full_beam_forces_query = f"""CREATE TABLE FULL_BEAM_FORCES AS

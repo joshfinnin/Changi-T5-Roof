@@ -15,7 +15,7 @@ Leaf 03-07\03-07\1D\G28 BracingPlanBot
 
 import duckdb
 import csv
-from inputs import bf_ext_als_parq_files, bp_ext_als_parq_files, node_cos_ang_dicts, node_sin_ang_dicts, node_dict, COL_HEAD_LOCATION, CRUCIFORM_OUTPUT_FP, NODAL_OUTPUT_FP, NODAL_FORCE_PARQUET
+from inputs import BF_EXT_ALS_PARQ_FILE_DICT, bp_ext_als_parq_files, node_cos_ang_dicts, node_sin_ang_dicts, node_dict, COL_HEAD_LOCATION, CRUCIFORM_OUTPUT_FP, NODAL_OUTPUT_FP, NODAL_FORCE_PARQUET
 
 
 def get_direction_coefficients(location: str, bp_parq_files: dict) -> str:
@@ -245,7 +245,7 @@ def get_differential_load_combinations(bp_parq_files: dict, node_pairs: dict, no
 
 if __name__ == '__main__':
 
-    direction_coefficients = get_direction_coefficients(COL_HEAD_LOCATION, bf_ext_als_parq_files)
+    direction_coefficients = get_direction_coefficients(COL_HEAD_LOCATION, BF_EXT_ALS_PARQ_FILE_DICT)
 
     with duckdb.connect() as conn:
 
