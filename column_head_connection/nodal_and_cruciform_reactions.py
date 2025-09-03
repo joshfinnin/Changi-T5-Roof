@@ -15,7 +15,7 @@ Leaf 03-07\03-07\1D\G28 BracingPlanBot
 
 import duckdb
 import csv
-from inputs import BF_EXT_ALS_PARQ_FILE_DICT, bp_ext_als_parq_files, node_cos_ang_dicts, node_sin_ang_dicts, node_dict, COL_HEAD_LOCATION, CRUCIFORM_OUTPUT_FP, NODAL_OUTPUT_FP, NODAL_FORCE_PARQUET
+from inputs import BF_EXT_ALS_PARQ_FILE_DICT, node_cos_ang_dicts, node_sin_ang_dicts, NODE_DICT, COL_HEAD_LOCATION, CRUCIFORM_OUTPUT_FP, NODAL_OUTPUT_FP, NODAL_FORCE_PARQUET
 
 
 def get_direction_coefficients(location: str, bp_parq_files: dict) -> str:
@@ -23,14 +23,9 @@ def get_direction_coefficients(location: str, bp_parq_files: dict) -> str:
     This is essentially a rotation of axes for each of the nodes based on their relative position with respect to
     the column head."""
     direction_coefficients = ", ".join(
-        f"({node}, '{model}', {node_cos_ang_dicts[model][location][node]}, {node_sin_ang_dicts[model][location][node]})"
-        for node in list(node_dict[location])
-        for model in bp_parq_files.keys() if "ALS" not in model)
-
-    direction_coefficients += ", "
-    direction_coefficients += ", ".join(
-        f"({node}, '{model}', {node_cos_ang_dicts[model][location][node]}, {node_sin_ang_dicts[model][location][node]})"
-        for node in list(node_dict[location + "_ALS"]) for model in bp_parq_files.keys() if "ALS" in model)
+        f"({node}, '{model}', {node_cos_ang_dicts[location][node]}, {node_sin_ang_dicts[location][node]})"
+        for node in list(NODE_DICT[location])
+        for model in bp_parq_files.keys())
 
     return direction_coefficients
 
@@ -90,8 +85,7 @@ def get_combined_worst_force_envelope(direction_coefficients: str, nodal_force_p
         ResultCaseName,
         Model,
         Fx, Fy, Fz, Mx, My, Mz, Fxy, Fxz, Fyz, Mxy, Mxz, Myz, Fxyz, Mxyz
-        FROM COMBO_RESULTS
-        JOIN EXTREMAS
+        FROM EXTREMAS
         WHERE
         Fx IN (Fx_MAX, Fx_MIN) OR
         Fy IN (Fy_MAX, Fy_MIN) OR
@@ -272,7 +266,7 @@ if __name__ == '__main__':
                                                                                  transform=True)
             # full_nodal_force_query = get_full_combined_nodal_force_query(location,
             #                                                              bp_parq_files,
-            #                                                              node_dict,
+            #                                                              NODE_DICT,
             #                                                              target_groups,
             #                                                              excluded_beam_dict)
 

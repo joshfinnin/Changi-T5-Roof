@@ -7,14 +7,14 @@ Refer to other scripts for the worst case node differential forces, and the wors
 
 import duckdb
 import csv
-from inputs import BF_EXT_ALS_PARQ_FILE_DICT, bp_ext_als_parq_files, column_beam_number_dict, COL_HEAD_LOCATION, TOP_OF_COLUMN_EXTREMA_OUTPUT_FP
+from inputs import BF_EXT_ALS_PARQ_FILE_DICT, column_beam_number_dict, COL_HEAD_LOCATION, TOP_OF_COLUMN_EXTREMA_OUTPUT_FP
 
 
 def get_column_query(location: str, bf_parq_files: dict) -> str:
 
     prequery = " UNION ALL ".join(f"""SELECT BeamNumber, ResultCaseName, '{model}' AS Model, Position, 
     Fx, Fy, Fz, Mx, My, Mz FROM '{bf_parq_files[model]}' 
-    WHERE BeamNumber = {column_beam_number_dict[model][location]}""" for model in bf_parq_files.keys())
+    WHERE BeamNumber = {column_beam_number_dict[location]}""" for model in bf_parq_files.keys())
 
     query = f"""WITH FULL_BEAM_FORCES AS ({prequery}),
 

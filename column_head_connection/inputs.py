@@ -181,21 +181,21 @@ C2_node_force_sin_ang_dict = {2140: sin(radians(315)), 2073: sin(radians(315)),
                               2028: sin(radians(135)), 1950: sin(radians(135)),
                               2094: sin(radians(45)), 2024: sin(radians(45))}
 
-node_cos_ang_dicts = {m: {} for m in BF_PERM_PARQ_FILE_DICT.keys()}
-node_sin_ang_dicts = {m: {} for m in BF_PERM_PARQ_FILE_DICT.keys()}
+node_cos_ang_dicts = {}
+node_sin_ang_dicts = {}
 
 for model in BP_PERM_PARQ_FILE_DICT.keys():
-    node_cos_ang_dicts[model]["B1"] = B1_node_force_cos_ang_dict
-    node_sin_ang_dicts[model]["B1"] = B1_node_force_sin_ang_dict
+    node_cos_ang_dicts["B1"] = B1_node_force_cos_ang_dict
+    node_sin_ang_dicts["B1"] = B1_node_force_sin_ang_dict
 
-    node_cos_ang_dicts[model]["B2"] = B2_node_force_cos_ang_dict
-    node_sin_ang_dicts[model]["B2"] = B2_node_force_sin_ang_dict
+    node_cos_ang_dicts["B2"] = B2_node_force_cos_ang_dict
+    node_sin_ang_dicts["B2"] = B2_node_force_sin_ang_dict
 
-    node_cos_ang_dicts[model]["C1"] = C1_node_force_cos_ang_dict
-    node_sin_ang_dicts[model]["C1"] = C1_node_force_sin_ang_dict
+    node_cos_ang_dicts["C1"] = C1_node_force_cos_ang_dict
+    node_sin_ang_dicts["C1"] = C1_node_force_sin_ang_dict
 
-    node_cos_ang_dicts[model]["C2"] = C2_node_force_cos_ang_dict
-    node_sin_ang_dicts[model]["C2"] = C2_node_force_sin_ang_dict
+    node_cos_ang_dicts["C2"] = C2_node_force_cos_ang_dict
+    node_sin_ang_dicts["C2"] = C2_node_force_sin_ang_dict
 
 
 NODE_DICT = {"B1": tuple(k for k in B1_node_force_cos_ang_dict.keys()),
