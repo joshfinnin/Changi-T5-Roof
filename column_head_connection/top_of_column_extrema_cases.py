@@ -7,7 +7,7 @@ Refer to other scripts for the worst case node differential forces, and the wors
 
 import duckdb
 import csv
-from inputs import bf_ext_als_parq_files, bp_ext_als_parq_files, column_beam_number_dict, COL_HEAD_LOCATION, TOP_OF_COLUMN_EXTREMA_OUTPUT_FP
+from inputs import BF_EXT_ALS_PARQ_FILE_DICT, bp_ext_als_parq_files, column_beam_number_dict, COL_HEAD_LOCATION, TOP_OF_COLUMN_EXTREMA_OUTPUT_FP
 
 
 def get_column_query(location: str, bf_parq_files: dict) -> str:
@@ -77,7 +77,7 @@ if __name__ == '__main__':
             writer = csv.writer(output_file)
             writer.writerow(headers)
 
-            query = get_column_query(COL_HEAD_LOCATION, bf_ext_als_parq_files)
+            query = get_column_query(COL_HEAD_LOCATION, BF_EXT_ALS_PARQ_FILE_DICT)
 
             results = conn.execute(query).fetchall()
             # for result in results:

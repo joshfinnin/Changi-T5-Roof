@@ -15,7 +15,7 @@ Leaf 03-07\03-07\1D\G28 BracingPlanBot
 
 import duckdb
 import csv
-from inputs import bf_ext_als_parq_files, bp_ext_als_parq_files, node_cos_ang_dicts, node_sin_ang_dicts, node_dict
+from inputs import bf_ext_als_parq_files, bp_ext_als_parq_files, node_cos_ang_dicts, node_sin_ang_dicts, node_dict, COL_HEAD_LOCATION, CRUCIFORM_OUTPUT_FP, NODAL_OUTPUT_FP, NODAL_FORCE_PARQUET
 
 
 def get_direction_coefficients(location: str, bp_parq_files: dict) -> str:
@@ -245,24 +245,11 @@ def get_differential_load_combinations(bp_parq_files: dict, node_pairs: dict, no
 
 if __name__ == '__main__':
 
-    # ----------------------------------------------------------------------
-    # INPUTS
-    # ----------------------------------------------------------------------
-
-    cruciform_output_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head\C1 Loads\2025-08-04 C1 Column Head Connections_Cruciform Worst Combinations_EXT_ALS.csv"
-    nodal_output_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head\C1 Loads\2025-08-04 C1 Column Head Connections_Nodal Worst Combinations_EXT_ALS.csv"
-    beam_forces_parquet_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head\C1 Loads\full_beam_forces_ext_als.parquet"
-    property_parquet_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head\C1 Loads\full_beam_properties_ext_als.parquet"
-    beam_ends_parquet_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head\C1 Loads\beam_ends_ext_als.parquet"
-    nodal_force_parquet_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head\C1 Loads\full_nodal_forces_ext_als.parquet"
-
-    location = "C1"
-
-    direction_coefficients = get_direction_coefficients(location, bf_ext_als_parq_files)
+    direction_coefficients = get_direction_coefficients(COL_HEAD_LOCATION, bf_ext_als_parq_files)
 
     with duckdb.connect() as conn:
 
-        with open(cruciform_output_fp, 'w+', newline='') as cruciform_output_file:
+        with open(CRUCIFORM_OUTPUT_FP, 'w+', newline='') as cruciform_output_file:
 
             # Get a writer for the cruciform_output_file and write the headers
             headers = ("Node", "ResultCaseName", "Model",
@@ -281,7 +268,7 @@ if __name__ == '__main__':
             #         GROUP BY Node, ResultCaseName, Model"""
 
             combined_worst_case_forces_query = get_combined_worst_force_envelope(direction_coefficients,
-                                                                                 nodal_force_parquet_fp,
+                                                                                 NODAL_FORCE_PARQUET,
                                                                                  transform=True)
             # full_nodal_force_query = get_full_combined_nodal_force_query(location,
             #                                                              bp_parq_files,
@@ -293,7 +280,7 @@ if __name__ == '__main__':
             results = conn.execute(combined_worst_case_forces_query).fetchall()
             writer.writerows(results)
 
-        with open(nodal_output_fp, 'w+', newline='') as nodal_output_file:
+        with open(NODAL_OUTPUT_FP, 'w+', newline='') as nodal_output_file:
 
             headers = ("Node", "ResultCaseName", "Model",
                        "Fx", "Fy", "Fz", "Mx", "My", "Mz",
@@ -303,7 +290,7 @@ if __name__ == '__main__':
             writer.writerow(headers)
 
             combined_worst_nodal_force_query = get_combined_worst_force_envelope(direction_coefficients,
-                                                                                 nodal_force_parquet_fp,
+                                                                                 NODAL_FORCE_PARQUET,
                                                                                  transform=False)
 
             results = conn.execute(combined_worst_nodal_force_query).fetchall()

@@ -4,20 +4,23 @@
 
 from math import sin, cos, radians
 import pathlib
-
+from datetime import date
 
 # ----------------------------------------------------------------------
 # MASTER FILE INPUTS AND LOCATION DATA
 # ----------------------------------------------------------------------
 COL_HEAD_LOCATION = "C1"
-ALS_ONLY = True  # When True, uses on the PARQ files in the ALS PARQ FILE DICTS.  Ignores PERM forces.
+ALS_ONLY = True  # When True, uses on the PARQ files in the ALS PARQ FILE DICTS.  Ignores PERM forces.bf_ext_als_parq_files
 output_folder_path = pathlib.Path(r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\02 - Connections\Main Leaf Column Head")
 
+output_date = date.today()
 FULL_BEAM_FORCES_PARQUET = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\full_beam_forces.parquet"
 BEAM_PROPERTY_PARQUET = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\full_beam_properties.parquet"
 BEAM_ENDS_PARQUET = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\beams_ends.parquet"
 NODAL_FORCE_PARQUET = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\full_nodal_forces.parquet"
-TOP_OF_COLUMN_EXTREMA_OUTPUT_FP = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\{COL_HEAD_LOCATION} Column Head Connections_Column Worst Combinations.csv"
+TOP_OF_COLUMN_EXTREMA_OUTPUT_FP = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\{output_date}_{COL_HEAD_LOCATION} Column Head Connections_Column Worst Combinations.csv"
+CRUCIFORM_OUTPUT_FP = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\{output_date}_{COL_HEAD_LOCATION} Cruciform Worst Combinations.csv"
+NODAL_OUTPUT_FP = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\{output_date}_{COL_HEAD_LOCATION} Nodal Worst Combinations.csv"
 
 # ----------------------------------------------------------------------
 # INPUT PARQUET FILES (FORCES AND PROPERTIES)
