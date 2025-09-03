@@ -3,8 +3,8 @@
 Takes a series of load combinations and outputs the loads for each fictitious element."""
 
 import duckdb
-from column_head_connection.nodal_and_cruciform_reactions import get_direction_coefficients
-from inputs import BF_EXT_ALS_PARQ_FILE_DICT, BP_EXT_ALS_PARQ_FILE_DICT, node_dict, result_cases_to_ignore, FULL_BEAM_FORCES_PARQUET, BEAM_ENDS_PARQUET, NODAL_FORCE_PARQUET, ordering_dicts
+from nodal_and_cruciform_reactions import get_direction_coefficients
+from inputs import BF_EXT_ALS_PARQ_FILE_DICT, BP_EXT_ALS_PARQ_FILE_DICT, NODE_DICT, result_cases_to_ignore, FULL_BEAM_FORCES_PARQUET, BEAM_ENDS_PARQUET, NODAL_FORCE_PARQUET, ordering_dicts, COL_HEAD_LOCATION, IDEASTATICA_COMBINATIONS_OUTPUT_FP
 import csv
 
 
@@ -15,13 +15,6 @@ def get_set_of_combinations(combination_list: list[tuple]) -> list:
     set_of_combinations = list(set(combination_list))
     set_of_combinations.sort(key=lambda x: int(x[0].split(":")[0].strip("'")))
     return set_of_combinations
-
-
-def get_ordering_key(model: str, location: str):
-    if "ALS" in model:
-        return location + "_ALS"
-    else:
-        return location
 
 
 headers = ["ResultCase", "Node", "ResultCaseName", "Model", "Combination",
@@ -124,50 +117,47 @@ if __name__ == '__main__':
         ("'22: S2_Gmax + LL + Wind X Pos Down + EHF -TT [2+3][M]'", "'45 ALS Removal S-TR13-04'")
     ]
 
-    C1_target_combinations = [("'4: S1_Gmax + Ld(LL) + Ac(Wind X Pos Down1 + T (+ve) + EHF +X) [1b][M]'", "'UB_Gmax'"),
-("'774: S1_Gmax + Ld(T (+ve)) + Ac(LL + Wind Y Neg Down2 + EHF +X) [1b][M]'", "'UB_Gmax'"),
-("'780: S1_Gmax + Ld(T (+ve)) + Ac(LL + Wind Y Neg Down2 + EHF DT1) [1b][M]'", "'LB_Gmax'"),
-("'1301: S2_Gmax + Ld(Wind Y Pos Down) + Ac(LL + T (+ve) + EHF +Y) [2+3][M]'", "'LB_Gmax'"),
-("'1306: S2_Gmax + Ld(Wind Y Pos Down) + Ac(LL + T (+ve) + EHF DT2) [2+3][M]'", "'LB_Gmax'"),
-("'1265: S2_Gmax + Ld(Wind X Pos Down) + Ac(LL + T (-ve) + EHF DT3) [2+3][M]'", "'UB_Gmax'"),
-("'1320: S2_Gmax + Ld(Wind Y Pos Down) + Ac(LL + T (-ve) + EHF DT2) [2+3][M]'", "'UB_Gmax'"),
-("'200: S1_Gmax + Ld(LL) + Ac(Wind Y Neg Down2 + T (+ve) + EHF +X) [1b][M]'", "'UB_Gmax'"),
-("'219: S1_Gmax + Ld(LL) + Ac(Wind Y Neg Down2 + T (-ve) + EHF -TT) [1b][M]'", "'LB_Gmax'"),
-("'1315: S2_Gmax + Ld(Wind Y Pos Down) + Ac(LL + T (-ve) + EHF +Y) [2+3][M]'", "'LB_Gmax'"),
-("'1315: S2_Gmax + Ld(Wind Y Pos Down) + Ac(LL + T (-ve) + EHF +Y) [2+3][M]'", "'UB_Gmax'"),
-("'1614: S2_Gmax + Ld(T (-ve)) + Ac(LL + Wind Y Pos Down + EHF DT2) [2+3][M]'", "'UB_Gmax'"),
-("'203: S1_Gmin + Ld(Wind Y Neg Up2) + Ac(T (+ve) + EHF -Y) [1b][M]'", "'UB_Gmin'"),
-("'1294: S2_Gmax + Ld(Wind X Neg Down) + Ac(LL + T (-ve) + EHF DT4) [2+3][M]'", "'UB_Gmax'"),
-("'776: S1_Gmax + Ld(T (+ve)) + Ac(LL + Wind Y Neg Down2 + EHF +Y) [1b][M]'", "'UB_Gmax'"),
-("'1294: S2_Gmax + Ld(Wind X Neg Down) + Ac(LL + T (-ve) + EHF DT4) [2+3][M]'", "'UB_Gmax'"),
-("'4: S1_Gmax + Ld(LL) + Ac(Wind X Pos Down1 + T (+ve) + EHF +X) [1b][M]'", "'UB_Gmax'"),
-("'780: S1_Gmax + Ld(T (+ve)) + Ac(LL + Wind Y Neg Down2 + EHF DT1) [1b][M]'", "'LB_Gmax'"),
-("'7: S2_Gmax + LL + EHF +X [2+3][M]'", "'17 ALS Removal P-TR03b-01'"),
-("'1301: S2_Gmax + Ld(Wind Y Pos Down) + Ac(LL + T (+ve) + EHF +Y) [2+3][M]'", "'LB_Gmax'"),
-("'1306: S2_Gmax + Ld(Wind Y Pos Down) + Ac(LL + T (+ve) + EHF DT2) [2+3][M]'", "'LB_Gmax'"),
-("'17: S2_Gmax + LL + Wind X Pos Down + EHF +X [2+3][M]'", "'53 ALS Removal S-TR01b-05'"),
-("'1320: S2_Gmax + Ld(Wind Y Pos Down) + Ac(LL + T (-ve) + EHF DT2) [2+3][M]'", "'UB_Gmax'"),
-("'219: S1_Gmax + Ld(LL) + Ac(Wind Y Neg Down2 + T (-ve) + EHF -TT) [1b][M]'", "'LB_Gmax'"),
-("'222: S1_Gmax + Ld(LL) + Ac(Wind Y Neg Down2 + T (-ve) + EHF DT3) [1b][M]'", "'UB_Gmax'"),
-("'1315: S2_Gmax + Ld(Wind Y Pos Down) + Ac(LL + T (-ve) + EHF +Y) [2+3][M]'", "'UB_Gmax'"),
-("'1315: S2_Gmax + Ld(Wind Y Pos Down) + Ac(LL + T (-ve) + EHF +Y) [2+3][M]'", "'LB_Gmax'"),
-("'203: S1_Gmin + Ld(Wind Y Neg Up2) + Ac(T (+ve) + EHF -Y) [1b][M]'", "'UB_Gmin'"),
-("'609: S1_Gmin + Ld(T (-ve)) + Ac(Wind Y Neg Up2 + EHF -Y) [1b][M]'", "'UB_Gmin'"),
-("'9: S2_Gmax + LL + EHF +Y [2+3][M]'", "'3 ALS Removal P-TR01b-01'"),
-("'1359: S2_Gmax + Ld(Wind 45 X Pos Y Pos) + Ac(LL + T (+ve) + EHF +TT) [2+3][M]'", "'LB_Gmax'"),
-("'1444: S2_Gmax + Ld(Wind 45 X Neg Y Neg) + Ac(LL + T (+ve) + EHF -TT) [2+3][M]'", "'LB_Gmax'"),
-("'217: S1_Gmin + Ld(Wind Y Neg Up2) + Ac(T (-ve) + EHF -Y) [1b][M]'", "'LB_Gmin'"),
-("'738: S2_Gmin + Ld(Wind Y Pos Up) + Ac(T (+ve) + EHF +Y) [2+3][M]'", "'LB_Gmin'"),
-("'4: S1_Gmax + Ld(LL) + Ac(Wind X Pos Down1 + T (+ve) + EHF +X) [1b][M]'", "'UB_Gmax'"),
-("'9: S1_Gmax + Ld(LL) + Ac(Wind X Pos Down1 + T (+ve) + EHF -TT) [1b][M]'", "'UB_Gmax'"),
-("'1016: S2_Q [2+3][M]'", "'UB_Gmax'"),
-("'1344: S2_Gmax + Ld(Wind Y Neg Down) + Ac(LL + T (-ve) + EHF -Y) [2+3][M]'", "'UB_Gmax'"),
-("'723: S2_Gmin + Ld(Wind X Neg Up) + Ac(T (-ve) + EHF -X) [2+3][M]'", "'UB_Gmin'"),
-("'738: S2_Gmin + Ld(Wind Y Pos Up) + Ac(T (+ve) + EHF +Y) [2+3][M]'", "'UB_Gmin'"),
-("'848: S2_Gmin + Ld(Wind 45 X Pos Y Neg) + Ac(T (+ve) + EHF +X) [2+3][M]'", "'UB_Gmin'"),
-("'853: S2_Gmin + Ld(Wind 45 X Pos Y Neg) + Ac(T (+ve) + EHF -TT) [2+3][M]'", "'UB_Gmin'"),
-("'10: S2_Gmax + LL + EHF -Y [2+3][M]'", "'32 ALS Removal P-TR04b-04'")
-    ]
+    C1_target_combinations = [
+("'1: 1a [1a][U]'", "'108 ALS Removal CHC1-T1'"),
+("'2: 1b(0) [1b][M]'", "'108 ALS Removal CHC1-T1'"),
+("'17: S2_Gmax + LL + Wind X Pos Down + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'21: S2_Gmax + LL + Wind X Pos Down + EHF +TT [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'39: S2_Gmax + LL + Wind Y Pos Down + EHF +Y [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'41: S2_Gmax + LL + Wind Y Pos Down + EHF +TT [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'50: S2_Gmax + LL + Wind Y Neg Down + EHF -Y [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'112: S2_Gmax + Wind X Neg Down + EHF -TT [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'17: S2_Gmax + LL + Wind X Pos Down + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'52: S2_Gmax + LL + Wind Y Neg Down + EHF -TT [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'9: S2_Gmax + LL + EHF +Y [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'17: S2_Gmax + LL + Wind X Pos Down + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'7: S2_Gmax + LL + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'44: S2_Gmax + LL + Wind Y Pos Down + EHF DT2 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'9: S2_Gmax + LL + EHF +Y [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'55: S2_Gmax + LL + Wind Y Neg Down + EHF DT3 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'5: 2&3(0) [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'36: S2_Gmax + LL + Wind X Neg Down + EHF DT4 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'47: S2_Gmax + LL + Wind Y Neg Down + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'28: S2_Gmax + LL + Wind X Neg Down + EHF -X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'43: S2_Gmax + LL + Wind Y Pos Down + EHF DT1 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'17: S2_Gmax + LL + Wind X Pos Down + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'7: S2_Gmax + LL + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'9: S2_Gmax + LL + EHF +Y [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'25: S2_Gmax + LL + Wind X Pos Down + EHF DT3 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'44: S2_Gmax + LL + Wind Y Pos Down + EHF DT2 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'7: S2_Gmax + LL + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'9: S2_Gmax + LL + EHF +Y [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'14: S2_Gmax + LL + EHF DT2 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'9: S2_Gmax + LL + EHF +Y [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'55: S2_Gmax + LL + Wind Y Neg Down + EHF DT3 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'12: S2_Gmax + LL + EHF -TT [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'36: S2_Gmax + LL + Wind X Neg Down + EHF DT4 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'47: S2_Gmax + LL + Wind Y Neg Down + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'53: S2_Gmax + LL + Wind Y Neg Down + EHF DT1 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'11: S2_Gmax + LL + EHF +TT [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'46: S2_Gmax + LL + Wind Y Pos Down + EHF DT4 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'28: S2_Gmax + LL + Wind X Neg Down + EHF -X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
+("'38: S2_Gmax + LL + Wind Y Pos Down + EHF -X [2+3][M]'", "'108 ALS Removal CHC1-T1'")
+]
 
     C2_target_combinations = [
         ("'1243: S2_Gmax + Ld(Wind X Pos Down) + Ac(LL + T (+ve) + EHF +X) [2+3][M]'", "'LB_Gmax'"),
@@ -211,19 +201,18 @@ if __name__ == '__main__':
                                "C1": get_set_of_combinations(C1_target_combinations),
                                "C2": get_set_of_combinations(C2_target_combinations)}
 
-    location = "B2"
-
-    target_combinations = target_combination_dict[location]
+    target_combinations = target_combination_dict[COL_HEAD_LOCATION]
     load_effect_indices = {loc.strip("'") + "_" + mdl.strip("'"): i for (loc, mdl), i in
                            zip(target_combinations, range(1, len(target_combinations) + 1))}
 
     with duckdb.connect() as conn:
-        direction_coefficients = get_direction_coefficients(location, BP_EXT_ALS_PARQ_FILE_DICT)
+        direction_coefficients = get_direction_coefficients(COL_HEAD_LOCATION, BP_EXT_ALS_PARQ_FILE_DICT)
         combination_string = ", ".join(f"({c}, {m})" for c, m in target_combinations)
         combination_filter_query = f"""SELECT * FROM (VALUES {combination_string}) AS COMBOS(ResultCaseName, Model)"""
         nodal_force_query = " UNION ALL ".join(f"""SELECT * FROM '{NODAL_FORCE_PARQUET}' 
-        WHERE Node IN {node_dict[get_ordering_key(model, location)]} AND Model = '{model}'""" for model in BF_EXT_ALS_PARQ_FILE_DICT)
+        WHERE Node IN {NODE_DICT[COL_HEAD_LOCATION]} AND Model = '{model}'""" for model in BF_EXT_ALS_PARQ_FILE_DICT)
 
+       
         query = f"""WITH FULL_BEAM_FORCES AS (SELECT * FROM '{FULL_BEAM_FORCES_PARQUET}'),
         BEAM_ENDS AS (SELECT * FROM '{BEAM_ENDS_PARQUET}'),
         NODAL_BEAM_FORCES AS ({nodal_force_query}),
@@ -278,18 +267,18 @@ if __name__ == '__main__':
         """
 
         results = conn.execute(query).fetchall()
-
-        results.sort(key=lambda x: (load_effect_indices[x[4]], ordering_dicts[get_ordering_key(x[3], location)][x[1]][1]))
+        
+        results.sort(key=lambda x: (load_effect_indices[x[4]], ordering_dicts[COL_HEAD_LOCATION][x[1]][1]))
 
         print("\t".join(headers))
         for result in results:
             result = list(result)
             result[4] = load_effect_indices[result[4]]
             model = result[3]
-            result.append(ordering_dicts[get_ordering_key(model, location)][result[1]][0])
+            result.append(ordering_dicts[COL_HEAD_LOCATION][result[1]][0])
             print("\t".join(str(r) for r in result))
 
-        # with open(bf_parq, 'w+', newline='') as csv_file:
+        # with open(IDEASTATICA_COMBINATIONS_OUTPUT_FP, 'w+', newline='') as csv_file:
         #     writer = csv.writer(csv_file)
         #     writer.writerow(headers)
         #     writer.writerows(results)

@@ -21,6 +21,7 @@ NODAL_FORCE_PARQUET = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\full_nod
 TOP_OF_COLUMN_EXTREMA_OUTPUT_FP = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\{output_date}_{COL_HEAD_LOCATION} Column Head Connections_Column Worst Combinations.csv"
 CRUCIFORM_OUTPUT_FP = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\{output_date}_{COL_HEAD_LOCATION} Cruciform Worst Combinations.csv"
 NODAL_OUTPUT_FP = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\{output_date}_{COL_HEAD_LOCATION} Nodal Worst Combinations.csv"
+IDEASTATICA_COMBINATIONS_OUTPUT_FP = output_folder_path / f"{COL_HEAD_LOCATION} Loads\\{output_date}_{COL_HEAD_LOCATION} IdeaStatica Combinations.csv"
 
 # ----------------------------------------------------------------------
 # INPUT PARQUET FILES (FORCES AND PROPERTIES)
