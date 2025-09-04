@@ -8,6 +8,7 @@ from inputs import (FULL_BEAM_FORCES_PARQUET, BEAM_ENDS_PARQUET, NODAL_FORCE_PAR
 from inputs import (BF_PERM_PARQ_FILE_DICT, BP_PERM_PARQ_FILE_DICT,
                     BF_EXT_ALS_PARQ_FILE_DICT, BP_EXT_ALS_PARQ_FILE_DICT, NODE_DICT)
 from inputs import EXCLUDED_BEAM_DICT, TARGET_GROUPS, RESULT_CASE_FILTER, COL_HEAD_LOCATION, ALS_ONLY
+from inputs import output_folder_path
 
 
 def configure_logging():
@@ -138,6 +139,8 @@ if __name__ == '__main__':
 
     configure_logging()
     log = logging.getLogger(__name__)
+
+    output_folder_path.mkdir(parents=True, exist_ok=True)
 
     with duckdb.connect() as conn:
         log.info("DuckDB database created.")
