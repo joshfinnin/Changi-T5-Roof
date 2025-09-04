@@ -10,7 +10,7 @@ from datetime import date
 # MASTER FILE INPUTS AND LOCATION DATA
 # ----------------------------------------------------------------------
 COL_HEAD_LOCATION = "C1"
-REMOVED_MEMBER = "TC3_Removed"
+REMOVED_MEMBER = "TC4_Removed"
 ALS_ONLY = True  # When True, uses on the PARQ files in the ALS PARQ FILE DICTS.  Ignores PERM forces.bf_ext_als_parq_files
 parent_folder_path = pathlib.Path(r"C:\Users\jason.le\Mott MacDonald\MBC SAM Project Portal - Main Leaf Column Head")
 output_folder_path = parent_folder_path / f"{COL_HEAD_LOCATION} Loads\\{REMOVED_MEMBER}"
@@ -41,7 +41,7 @@ BP_PERM_PARQ_FILE_DICT = {
     'UB_Gmin': 'C:\\Users\\jason.le\Mott MacDonald\\MBC SAM Project Portal - V1.4.5\\Global Axes Parquet\\V1_4_5_UB_Gmmin\\beam_properties.parquet'}
 
 BF_EXT_ALS_PARQ_FILE_DICT = {
-    r"108 ALS Removal CHC1-T1": r"C:\Users\jason.le\Mott MacDonald\MBC SAM Project Portal - V1.4.5\ALS\Outputs\Global Axes Parquet\108 ALS Removal CHC1-T1\beam_forces.parquet"
+    r"110 ALS Removal CHC1-T3": r"C:\Users\jason.le\Mott MacDonald\MBC SAM Project Portal - V1.4.5\ALS\Outputs\Global Axes Parquet\110 ALS Removal CHC1-T3\beam_forces.parquet"
 }
 
 BP_EXT_ALS_PARQ_FILE_DICT = {
@@ -142,7 +142,7 @@ BP_EXT_ALS_PARQ_FILE_DICT = {
 # ----------------------------------------------------------------------
 # COLUMN NUMBERS AND NODE NUMBERS
 # ----------------------------------------------------------------------
-column_beam_number_dict = {'B1': 2652, 'B2': 2665, 'C1': 2662, 'C2': 2663}
+column_beam_number_dict = {'B1': 2651, 'B2': 2664, 'C1': 2661, 'C2': 2662}
 
 B1_node_force_cos_ang_dict = {1811: cos(radians(315)), 1748: cos(radians(315)),
                               1742: cos(radians(225)), 1678: cos(radians(225)),

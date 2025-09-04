@@ -118,47 +118,44 @@ if __name__ == '__main__':
     ]
 
     C1_target_combinations = [
-("'1: 1a [1a][U]'", "'108 ALS Removal CHC1-T1'"),
-("'2: 1b(0) [1b][M]'", "'108 ALS Removal CHC1-T1'"),
-("'17: S2_Gmax + LL + Wind X Pos Down + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'21: S2_Gmax + LL + Wind X Pos Down + EHF +TT [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'39: S2_Gmax + LL + Wind Y Pos Down + EHF +Y [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'41: S2_Gmax + LL + Wind Y Pos Down + EHF +TT [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'50: S2_Gmax + LL + Wind Y Neg Down + EHF -Y [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'112: S2_Gmax + Wind X Neg Down + EHF -TT [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'17: S2_Gmax + LL + Wind X Pos Down + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'52: S2_Gmax + LL + Wind Y Neg Down + EHF -TT [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'9: S2_Gmax + LL + EHF +Y [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'17: S2_Gmax + LL + Wind X Pos Down + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'7: S2_Gmax + LL + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'44: S2_Gmax + LL + Wind Y Pos Down + EHF DT2 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'9: S2_Gmax + LL + EHF +Y [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'55: S2_Gmax + LL + Wind Y Neg Down + EHF DT3 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'5: 2&3(0) [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'36: S2_Gmax + LL + Wind X Neg Down + EHF DT4 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'47: S2_Gmax + LL + Wind Y Neg Down + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'28: S2_Gmax + LL + Wind X Neg Down + EHF -X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'43: S2_Gmax + LL + Wind Y Pos Down + EHF DT1 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'17: S2_Gmax + LL + Wind X Pos Down + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'7: S2_Gmax + LL + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'9: S2_Gmax + LL + EHF +Y [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'25: S2_Gmax + LL + Wind X Pos Down + EHF DT3 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'44: S2_Gmax + LL + Wind Y Pos Down + EHF DT2 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'7: S2_Gmax + LL + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'9: S2_Gmax + LL + EHF +Y [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'14: S2_Gmax + LL + EHF DT2 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'9: S2_Gmax + LL + EHF +Y [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'55: S2_Gmax + LL + Wind Y Neg Down + EHF DT3 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'12: S2_Gmax + LL + EHF -TT [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'36: S2_Gmax + LL + Wind X Neg Down + EHF DT4 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'47: S2_Gmax + LL + Wind Y Neg Down + EHF +X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'53: S2_Gmax + LL + Wind Y Neg Down + EHF DT1 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'11: S2_Gmax + LL + EHF +TT [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'46: S2_Gmax + LL + Wind Y Pos Down + EHF DT4 [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'28: S2_Gmax + LL + Wind X Neg Down + EHF -X [2+3][M]'", "'108 ALS Removal CHC1-T1'"),
-("'38: S2_Gmax + LL + Wind Y Pos Down + EHF -X [2+3][M]'", "'108 ALS Removal CHC1-T1'")
+("'1: 1a [1a][U]'", "'110 ALS Removal CHC1-T3'"),
+("'2: 1b(0) [1b][M]'", "'110 ALS Removal CHC1-T3'"),
+("'9: S2_Gmax + LL + EHF +Y [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'17: S2_Gmax + LL + Wind X Pos Down + EHF +X [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'32: S2_Gmax + LL + Wind X Neg Down + EHF -TT [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'50: S2_Gmax + LL + Wind Y Neg Down + EHF -Y [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'52: S2_Gmax + LL + Wind Y Neg Down + EHF -TT [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'161: S2_Gmax + Wind 45 X Pos Y Neg + EHF +TT [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'17: S2_Gmax + LL + Wind X Pos Down + EHF +X [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'52: S2_Gmax + LL + Wind Y Neg Down + EHF -TT [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'9: S2_Gmax + LL + EHF +Y [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'17: S2_Gmax + LL + Wind X Pos Down + EHF +X [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'7: S2_Gmax + LL + EHF +X [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'41: S2_Gmax + LL + Wind Y Pos Down + EHF +TT [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'9: S2_Gmax + LL + EHF +Y [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'5: 2&3(0) [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'15: S2_Gmax + LL + EHF DT3 [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'44: S2_Gmax + LL + Wind Y Pos Down + EHF DT2 [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'47: S2_Gmax + LL + Wind Y Neg Down + EHF +X [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'7: S2_Gmax + LL + EHF +X [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'39: S2_Gmax + LL + Wind Y Pos Down + EHF +Y [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'11: S2_Gmax + LL + EHF +TT [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'17: S2_Gmax + LL + Wind X Pos Down + EHF +X [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'7: S2_Gmax + LL + EHF +X [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'9: S2_Gmax + LL + EHF +Y [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'25: S2_Gmax + LL + Wind X Pos Down + EHF DT3 [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'39: S2_Gmax + LL + Wind Y Pos Down + EHF +Y [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'9: S2_Gmax + LL + EHF +Y [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'12: S2_Gmax + LL + EHF -TT [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'15: S2_Gmax + LL + EHF DT3 [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'47: S2_Gmax + LL + Wind Y Neg Down + EHF +X [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'53: S2_Gmax + LL + Wind Y Neg Down + EHF DT1 [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'7: S2_Gmax + LL + EHF +X [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'11: S2_Gmax + LL + EHF +TT [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'39: S2_Gmax + LL + Wind Y Pos Down + EHF +Y [2+3][M]'", "'110 ALS Removal CHC1-T3'"),
+("'11: S2_Gmax + LL + EHF +TT [2+3][M]'", "'110 ALS Removal CHC1-T3'")
 ]
-
+    
     C2_target_combinations = [
         ("'1243: S2_Gmax + Ld(Wind X Pos Down) + Ac(LL + T (+ve) + EHF +X) [2+3][M]'", "'LB_Gmax'"),
         ("'1330: S2_Gmax + Ld(Wind Y Neg Down) + Ac(LL + T (+ve) + EHF -Y) [2+3][M]'", "'LB_Gmax'"),
@@ -270,16 +267,16 @@ if __name__ == '__main__':
         
         results.sort(key=lambda x: (load_effect_indices[x[4]], ordering_dicts[COL_HEAD_LOCATION][x[1]][1]))
 
-        print("\t".join(headers))
-        for result in results:
-            result = list(result)
-            result[4] = load_effect_indices[result[4]]
-            model = result[3]
-            result.append(ordering_dicts[COL_HEAD_LOCATION][result[1]][0])
-            print("\t".join(str(r) for r in result))
+        # print("\t".join(headers))
+        # for result in results:
+        #     result = list(result)
+        #     result[4] = load_effect_indices[result[4]]
+        #     model = result[3]
+        #     result.append(ordering_dicts[COL_HEAD_LOCATION][result[1]][0])
+        #     print("\t".join(str(r) for r in result))
 
-        # with open(IDEASTATICA_COMBINATIONS_OUTPUT_FP, 'w+', newline='') as csv_file:
-        #     writer = csv.writer(csv_file)
-        #     writer.writerow(headers)
-        #     writer.writerows(results)
+        with open(IDEASTATICA_COMBINATIONS_OUTPUT_FP, 'w+', newline='') as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(headers)
+            writer.writerows(results)
 
