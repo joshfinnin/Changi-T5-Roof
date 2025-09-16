@@ -5,7 +5,6 @@ import time
 from inputs import (perm_forces_parq_dict, splice_data,
                     als_models, als_force_parq_dict, als_prop_parq_dict, als_summary_parq_folder_dict,
                     perm_beam_forces_filtered_parq, perm_beam_properties_parq)
-from QL_inputs import CAL_10, CAL_11, CAL_12, CAL_17, CAL_18
 
 
 def get_perm_beam_prop_query(beam_properties_parquet: str):
@@ -115,10 +114,10 @@ if __name__ == '__main__':
             start = time.time()
             results = conn.execute(query).fetchall()
             for result in results:
-                print(result)
+                print(f"\t{result[0]:,.0f} rows retrieved.")
             end = time.time()
             duration = end - start
-            print(f"Duration of query execution: {duration:.2f}s")
+            print(f"\tRetrieval time: {duration:.2f}s")
 
 
 

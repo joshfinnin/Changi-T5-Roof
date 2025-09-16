@@ -24,39 +24,6 @@ FROM BeamProperties AS BP
 JOIN NodalCoordinates AS node1 ON node1.NodeNumber = BP.N1
 JOIN NodalCoordinates AS node2 ON node2.NodeNumber = BP.N2;"""
 
-S7_FORCE_QUERY = """SELECT
-BeamNumber,
-ResultCase,
-ResultCaseName,
-Position,
-Fx,
-Fy,
-Fz,
-Mx,
-My,
-Mz
-FROM BeamForces;"""
-
-
-def query_from_sql(db_fp: str, query: str = S7_GEOMETRY_QUERY, results_as_dict=False) -> list[dict]:
-    """
-    Retrieve beam geometry from a SQLite database.
-    Each row returned is a tuple:
-    (BeamNumber, node1.X, node1.Y, node1.Z, node2.X, node2.Y, node2.Z)
-    """
-    connection = connect(db_fp)
-    if results_as_dict:
-        connection.row_factory = Row
-    cursor = connection.cursor()
-
-    if results_as_dict:
-        results = [dict(row) for row in cursor.execute(query).fetchall()]
-    else:
-        results = cursor.execute(query).fetchall()
-
-    connection.close()
-    return results
-
 
 @dataclass
 class Node:
@@ -273,14 +240,14 @@ class BeamJoiner:
         """
         Method to create a node dictionary.
 
-        Method is only invoked if node_dict has not been provided as an input.
+        Method is only invoked if NODE_DICT has not been provided as an input.
         The nodes are determined by finding common points from the full collection of model
         beam coordinates. If the points occur within a particular tolerance, a node with a
         unique number is created and added to the dictionary.
 
         Effectively allows a collection of geometrically defined beams to be converted to
         a collection of topologically defined beams.
-        :return: node_dict
+        :return: NODE_DICT
         """
 
         # Start with an empty list
@@ -299,7 +266,11 @@ class BeamJoiner:
         return node_dict
 
     def _get_nodal_association_and_beam_dicts(self) -> tuple[Dict[int, list], Dict[int, list]]:
+        """
+        Method for finding the association between nodes and beams.
 
+        Returns a dictionary of nodes and their associated beams, and vice versa.
+        """
         node_list = [i for i in self.node_dict.keys()]
         node_list.sort()
 
@@ -406,7 +377,7 @@ class BeamJoiner:
         parent = {beam.number: beam.number for beam in self.target_beams}
 
         # Step 2: Merge sets for beams that are collinear and satisfy connectivity.
-        # Can change the below line to only iterate through the target
+        # Can change the below line to only iterate through the target, but cbf at the moment
         n = len(self.target_beams)
         progress_increment = int(n / 100)
         print(f"Commencing beam segment grouping. Target groups: {self.target_groups}")
@@ -549,10 +520,10 @@ def _check_inclusion(candidate: str, test_strings: tuple[str, ...]):
 def map_models(model1_beams: list[Beam], model2_beams: list[Beam], src_mpts: list, dst_mpts: list,
                tolerance: Union[int, float] = 200):
     """Transforms objects in one model from one cartesian axis system to another, and
-    finds the mapping of objects between the models.
+    finds the mapping of objects between the bf_models.
 
     Object coordinates from model 1 are transformed using the GeometricTransformer class.
-    Object mappings between models are then found using the LineMapper class.
+    Object mappings between bf_models are then found using the LineMapper class.
 
     :returns
         Prints the mapping as a series of tab separated values.
@@ -586,7 +557,7 @@ if __name__ == "__main__":
     strand_1_db = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.3\V1_3_3-Umax-LB\V1_3_3_LB_GmaxNLA.db"
     strand_2_db = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.5\V1_3_5_LB_Gmax\V1_3_5_LB_GmaxNLA.db"
 
-    # These points represent the same physical locations in both models.
+    # These points represent the same physical locations in both bf_models.
     # Points in source coordinate system (model 1):
     source_mapping_points = [
         [0.0, 0.0, 0.0],  # Point A

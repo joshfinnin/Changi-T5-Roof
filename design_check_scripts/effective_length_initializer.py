@@ -3,15 +3,301 @@
 effective_length_initializer.py
 
 Module for determining the effective lengths of the beams in the Strand7 model.
-Uses the BeamJoiner class, and writes the effective length table to a CSV file.
+Uses the BeamJoiner class, and writes the effective length table to a CSV cruciform_output_file.
 """
 
 from Geometry.structural_geometry_mappers import BeamJoiner, Beam
-from sqlite3 import *
+import duckdb
 from typing import Union
 import csv
 
-# 1, 2, 3, 4, 15, 16, and 66 within the _group_num_dict is redundant. Stair 03 and Stair 04 groups excluded.
+# ----------------------------------------------------------------------
+# FILE PATH INPUTS FOR THE STRAND DATABASES AND OUTPUT FILE
+# ----------------------------------------------------------------------
+
+bp_parq = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.5\V1_4_5_LB_Gmax_Parquet\beam_properties.parquet"
+nc_parq = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.5\V1_4_5_LB_Gmax_Parquet\nodal_coordinates.parquet"
+csv_fp = r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\Member Checks\Effective_Lengths.csv"
+
+# ----------------------------------------------------------------------
+# DEFINES THE GROUPS THAT CAN BE USED FOR RESTRAINT OF ANOTHER GROUP FOR
+# EACH INDIVIDUAL GROUP IN EACH INDIVIDUAL AXIS
+# ----------------------------------------------------------------------
+
+MAJOR_AXIS_RESTRAINT_GROUPS_DICT = {r'Leaf 03-07\03-07\1D\E9x Exhaust\E91 ExhaustSupport': (0,),
+                                    r'Leaf 03-07\03-07\1D\E9x Exhaust\E92 ExhaustVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\E9x Exhaust\E93 ExhaustArc': (0,),
+                                    r'Leaf 03-07\03-07\1D\E9x Exhaust\E94 ExhaustBeam': (0,),
+                                    r'Leaf 03-07\03-07\1D\G01 PrimaryTop': (7, 8, 33),
+                                    r'Leaf 03-07\03-07\1D\G02 PrimaryBot': (7, 8, 33),
+                                    r'Leaf 03-07\03-07\1D\G03 PrimaryDiag': (0,),
+                                    r'Leaf 03-07\03-07\1D\G04 PrimaryVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\G05 SecondaryTop': (5, 11, 12),
+                                    r'Leaf 03-07\03-07\1D\G06 SecondaryBot': (6, 11, 12),
+                                    r'Leaf 03-07\03-07\1D\G07 SecondaryDiag': (0,),
+                                    r'Leaf 03-07\03-07\1D\G08 SecondaryVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\G09 EdgeTrussTop': (5, 9),
+                                    r'Leaf 03-07\03-07\1D\G10 EdgeTrussBot': (6, 10),
+                                    r'Leaf 03-07\03-07\1D\G11 EdgeTrussDiag': (0,),
+                                    r'Leaf 03-07\03-07\1D\G12 EdgeTrussVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\G23 PurlinTop': (5, 9),
+                                    r'Leaf 03-07\03-07\1D\G24 PurlinBot': (6, 10),
+                                    r'Leaf 03-07\03-07\1D\G25 BracingClipOnTop': (0,),
+                                    r'Leaf 03-07\03-07\1D\G26 BracingClipOnBot': (0,),
+                                    r'Leaf 03-07\03-07\1D\G27 BracingPlanTop': (0,),
+                                    r'Leaf 03-07\03-07\1D\G28 BracingPlanBot': (0,),
+                                    r'Leaf 03-07\03-07\1D\G29 ClipOnEdge': (27,),
+                                    r'Leaf 03-07\03-07\1D\G30 ClipOnVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\G31 ClipOnTop': (26, 29),
+                                    r'Leaf 03-07\03-07\1D\G32 ClipOnBot': (26, 29),
+                                    r'Leaf 03-07\03-07\1D\G33 ClipOnDiag': (0,),
+                                    r'Leaf 03-07\03-07\1D\G41 FacadeBot': (10,),
+                                    r'Leaf 03-07\03-07\1D\G43 ColumnHeadExt': (0,),
+                                    r'Leaf 03-07\03-07\1D\G44 ColHeadDiag': (0,),
+                                    r'Leaf 03-07\03-07\1D\G45 ColHeadVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\G60 RooflightPrimary': (0,),
+                                    r'Leaf 03-07\03-07\1D\G61 RooflightSecondary': (34,),
+                                    r'Leaf 03-07\03-07\1D\G62 RooflightTertiary': (34, 35),
+                                    r'Leaf 03-07\03-07\1D\G63 RooflightUpstand': (0,),
+                                    r'Leaf 03-07\03-07\1D\G69 PileCap': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G70 ColumnBaseExt': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-1': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-2': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-3': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-4': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-5': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-6': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-7': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-8': (0,),
+                                    r'Leaf 03-07\03-07\1D\G80 EdgeArm': (0,),
+                                    r'Leaf 03-07\03-07\1D\G81 EdgeOuter': (48,),
+                                    r'Leaf 03-07\03-07\1D\G82 Outrigger': (0,),
+                                    r'Leaf 03-07\03-07\1D\G83 EdgePurlinTop': (27,),
+                                    r'Leaf 03-07\03-07\1D\G84 EdgePurlinBot': (28,),
+                                    r'Leaf 03-07\03-07\1D\G87 EdgeGutter': (27,),
+                                    r'Leaf 03-07\03-07\1D\G88 CatWalkStringer': (6, 10),
+                                    r'Leaf 03-07\03-07\1D\G89 LiftingBeam': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeMullionA': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeMullionB': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeMullionC': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeMullionD': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeTransomA': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeTransomB': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeTransomC': (0,),
+                                    r'Leaf 03-07\03-07\Facade\G40 FacadeHeaderA': (0,),
+                                    r'Leaf 03-07\03-07\Facade\G50 ClerestoryMullion': (0,),
+                                    r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\2D_ExhaustPanels': (0,),
+                                    r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\G90_ExhaustDummy': (0,),
+                                    r'Leaf 03-07\03-08\1D\3809 G69 Ground beams': (0,),
+                                    r'Leaf 03-07\03-08\1D\3809 QL_G09 EdgeTrussTop': (78,),
+                                    r'Leaf 03-07\03-08\1D\3810 QL_G10 EdgeTrussBot': (71, 76),
+                                    r'Leaf 03-07\03-08\1D\3811 QL_G11 EdgeTrussDiag': (0,),
+                                    r'Leaf 03-07\03-08\1D\3812 QL_G12 EdgeTrussVert': (0,),
+                                    r'Leaf 03-07\03-08\1D\3822 QL_G22 QLRoofSecondaryClerestory': (78,),
+                                    r'Leaf 03-07\03-08\1D\3823 QL_G23 QLRoofPurlin': (78,),
+                                    r'Leaf 03-07\03-08\1D\3829 QL_G29 ClipOnEdge': (75,),
+                                    r'Leaf 03-07\03-08\1D\3831 QL_G31 ClipOnTop': (78,),
+                                    r'Leaf 03-07\03-08\1D\3874 QL_G70 QLColumn': (0,),
+                                    r'Leaf 03-07\03-08\1D\3887 QL_G87 EdgeGutter': (75,),
+                                    r'Leaf 03-07\03-08\1D\3890 QL_G90 QLRoofPrimary': (76,),
+                                    r'Leaf 03-07\03-08\1D\3891 QL_G91 QLRoofSecondary': (78,),
+                                    r'Leaf 03-07\03-08\1D\3892 QL_G92 QLRoofBracing': (0,),
+                                    r'Leaf 03-07\03-08\1D\3893 QL_G93 QLCeilingPrimary': (76,),
+                                    r'Leaf 03-07\03-08\1D\3894 QL_G94 QLCeilingSecondary': (81,),
+                                    r'Leaf 03-07\03-08\1D\3895 QL_G95 QLCeilingPortal': (76,),
+                                    r'Leaf 03-07\03-08\1D\3896 QL_G96 QLCeilingNoggings': (82, 83),
+                                    r'Leaf 03-07\03-08\1D\3897 QL_G97 QLCeilingBracing': (0,),
+                                    r'Leaf 03-07\03-08\1D\3898 QL_G98 QLVerticalBracing': (0,),
+                                    r'Leaf 03-07\03-08\1D\3899 QL_G99 QLClipOnExtension': (0,),
+                                    r'Leaf 03-07\03-08\Facade\3850 QL_G50 Clerestory': (0,),
+                                    r'Leaf 03-07\03-08\Facade\3851 QL_G51 Mullion Typical': (0,),
+                                    r'Leaf 03-07\03-08\Facade\3854 QL_G54 Mullion Glazed': (0,),
+                                    r'Leaf 03-07\03-07\1D\E9x Exhaust': (9, 19),
+                                    }
+
+MINOR_AXIS_RESTRAINT_GROUPS_DICT = {r'Leaf 03-07\03-07\1D\E9x Exhaust\E91 ExhaustSupport': (0,),
+                                    r'Leaf 03-07\03-07\1D\E9x Exhaust\E92 ExhaustVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\E9x Exhaust\E93 ExhaustArc': (0,),
+                                    r'Leaf 03-07\03-07\1D\E9x Exhaust\E94 ExhaustBeam': (0,),
+                                    r'Leaf 03-07\03-07\1D\G01 PrimaryTop': (9, 23),
+                                    r'Leaf 03-07\03-07\1D\G02 PrimaryBot': (10, 24),
+                                    r'Leaf 03-07\03-07\1D\G03 PrimaryDiag': (0,),
+                                    r'Leaf 03-07\03-07\1D\G04 PrimaryVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\G05 SecondaryTop': (5,),
+                                    r'Leaf 03-07\03-07\1D\G06 SecondaryBot': (6,),
+                                    r'Leaf 03-07\03-07\1D\G07 SecondaryDiag': (0,),
+                                    r'Leaf 03-07\03-07\1D\G08 SecondaryVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\G09 EdgeTrussTop': (5, 9, 17, 18),
+                                    r'Leaf 03-07\03-07\1D\G10 EdgeTrussBot': (6, 10, 17, 18),
+                                    r'Leaf 03-07\03-07\1D\G11 EdgeTrussDiag': (0,),
+                                    r'Leaf 03-07\03-07\1D\G12 EdgeTrussVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\G23 PurlinTop': (5, 9, 23),
+                                    r'Leaf 03-07\03-07\1D\G24 PurlinBot': (6, 10, 24),
+                                    r'Leaf 03-07\03-07\1D\G25 BracingClipOnTop': (0,),
+                                    r'Leaf 03-07\03-07\1D\G26 BracingClipOnBot': (0,),
+                                    r'Leaf 03-07\03-07\1D\G27 BracingPlanTop': (0,),
+                                    r'Leaf 03-07\03-07\1D\G28 BracingPlanBot': (0,),
+                                    r'Leaf 03-07\03-07\1D\G29 ClipOnEdge': (27,),
+                                    r'Leaf 03-07\03-07\1D\G30 ClipOnVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\G31 ClipOnTop': (21,),
+                                    r'Leaf 03-07\03-07\1D\G32 ClipOnBot': (22,),
+                                    r'Leaf 03-07\03-07\1D\G33 ClipOnDiag': (0,),
+                                    r'Leaf 03-07\03-07\1D\G41 FacadeBot': (10,),
+                                    r'Leaf 03-07\03-07\1D\G43 ColumnHeadExt': (0,),
+                                    r'Leaf 03-07\03-07\1D\G44 ColHeadDiag': (0,),
+                                    r'Leaf 03-07\03-07\1D\G45 ColHeadVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\G60 RooflightPrimary': (0,),
+                                    r'Leaf 03-07\03-07\1D\G61 RooflightSecondary': (34,),
+                                    r'Leaf 03-07\03-07\1D\G62 RooflightTertiary': (34, 35),
+                                    r'Leaf 03-07\03-07\1D\G63 RooflightUpstand': (0,),
+                                    r'Leaf 03-07\03-07\1D\G69 PileCap': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G70 ColumnBaseExt': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-1': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-2': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-3': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-4': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-5': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-6': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-7': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-8': (0,),
+                                    r'Leaf 03-07\03-07\1D\G80 EdgeArm': (0,),
+                                    r'Leaf 03-07\03-07\1D\G81 EdgeOuter': (48, 50),
+                                    r'Leaf 03-07\03-07\1D\G82 Outrigger': (0,),
+                                    r'Leaf 03-07\03-07\1D\G83 EdgePurlinTop': (27,),
+                                    r'Leaf 03-07\03-07\1D\G84 EdgePurlinBot': (28,),
+                                    r'Leaf 03-07\03-07\1D\G87 EdgeGutter': (27,),
+                                    r'Leaf 03-07\03-07\1D\G88 CatWalkStringer': (6, 10),
+                                    r'Leaf 03-07\03-07\1D\G89 LiftingBeam': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeMullionA': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeMullionB': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeMullionC': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeMullionD': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeTransomA': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeTransomB': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeTransomC': (0,),
+                                    r'Leaf 03-07\03-07\Facade\G40 FacadeHeaderA': (0,),
+                                    r'Leaf 03-07\03-07\Facade\G50 ClerestoryMullion': (0,),
+                                    r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\2D_ExhaustPanels': (0,),
+                                    r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\G90_ExhaustDummy': (0,),
+                                    r'Leaf 03-07\03-08\1D\3809 G69 Ground beams': (0,),
+                                    r'Leaf 03-07\03-08\1D\3809 QL_G09 EdgeTrussTop': (78, 70),
+                                    r'Leaf 03-07\03-08\1D\3810 QL_G10 EdgeTrussBot': (70,),
+                                    r'Leaf 03-07\03-08\1D\3811 QL_G11 EdgeTrussDiag': (0,),
+                                    r'Leaf 03-07\03-08\1D\3812 QL_G12 EdgeTrussVert': (0,),
+                                    r'Leaf 03-07\03-08\1D\3822 QL_G22 QLRoofSecondaryClerestory': (78,),
+                                    r'Leaf 03-07\03-08\1D\3823 QL_G23 QLRoofPurlin': (78,),
+                                    r'Leaf 03-07\03-08\1D\3829 QL_G29 ClipOnEdge': (75,),
+                                    r'Leaf 03-07\03-08\1D\3831 QL_G31 ClipOnTop': (0,),
+                                    r'Leaf 03-07\03-08\1D\3874 QL_G70 QLColumn': (0,),
+                                    r'Leaf 03-07\03-08\1D\3887 QL_G87 EdgeGutter': (75,),
+                                    r'Leaf 03-07\03-08\1D\3890 QL_G90 QLRoofPrimary': (76, 79, 80),
+                                    r'Leaf 03-07\03-08\1D\3891 QL_G91 QLRoofSecondary': (78, 80),
+                                    r'Leaf 03-07\03-08\1D\3892 QL_G92 QLRoofBracing': (0,),
+                                    r'Leaf 03-07\03-08\1D\3893 QL_G93 QLCeilingPrimary': (76,),
+                                    r'Leaf 03-07\03-08\1D\3894 QL_G94 QLCeilingSecondary': (81, 84, 85),
+                                    r'Leaf 03-07\03-08\1D\3895 QL_G95 QLCeilingPortal': (81, 84, 85),
+                                    r'Leaf 03-07\03-08\1D\3896 QL_G96 QLCeilingNoggings': (82, 83),
+                                    r'Leaf 03-07\03-08\1D\3897 QL_G97 QLCeilingBracing': (0,),
+                                    r'Leaf 03-07\03-08\1D\3898 QL_G98 QLVerticalBracing': (0,),
+                                    r'Leaf 03-07\03-08\1D\3899 QL_G99 QLClipOnExtension': (0,),
+                                    r'Leaf 03-07\03-08\Facade\3850 QL_G50 Clerestory': (0,),
+                                    r'Leaf 03-07\03-08\Facade\3851 QL_G51 Mullion Typical': (0,),
+                                    r'Leaf 03-07\03-08\Facade\3854 QL_G54 Mullion Glazed': (0,),
+                                    r'Leaf 03-07\03-07\1D\E9x Exhaust': (9, 19),
+                                    }
+
+TORSIONAL_AXIS_RESTRAINT_GROUPS_DICT = {r'Leaf 03-07\03-07\1D\E9x Exhaust\E91 ExhaustSupport': (0,),
+                                    r'Leaf 03-07\03-07\1D\E9x Exhaust\E92 ExhaustVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\E9x Exhaust\E93 ExhaustArc': (0,),
+                                    r'Leaf 03-07\03-07\1D\E9x Exhaust\E94 ExhaustBeam': (0,),
+                                    r'Leaf 03-07\03-07\1D\G01 PrimaryTop': (7, 8, 33),
+                                    r'Leaf 03-07\03-07\1D\G02 PrimaryBot': (7, 8, 33),
+                                    r'Leaf 03-07\03-07\1D\G03 PrimaryDiag': (0,),
+                                    r'Leaf 03-07\03-07\1D\G04 PrimaryVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\G05 SecondaryTop': (5, 11, 12),
+                                    r'Leaf 03-07\03-07\1D\G06 SecondaryBot': (6, 11, 12),
+                                    r'Leaf 03-07\03-07\1D\G07 SecondaryDiag': (0,),
+                                    r'Leaf 03-07\03-07\1D\G08 SecondaryVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\G09 EdgeTrussTop': (5, 9),
+                                    r'Leaf 03-07\03-07\1D\G10 EdgeTrussBot': (6, 10),
+                                    r'Leaf 03-07\03-07\1D\G11 EdgeTrussDiag': (0,),
+                                    r'Leaf 03-07\03-07\1D\G12 EdgeTrussVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\G23 PurlinTop': (5, 9),
+                                    r'Leaf 03-07\03-07\1D\G24 PurlinBot': (6, 10),
+                                    r'Leaf 03-07\03-07\1D\G25 BracingClipOnTop': (0,),
+                                    r'Leaf 03-07\03-07\1D\G26 BracingClipOnBot': (0,),
+                                    r'Leaf 03-07\03-07\1D\G27 BracingPlanTop': (0,),
+                                    r'Leaf 03-07\03-07\1D\G28 BracingPlanBot': (0,),
+                                    r'Leaf 03-07\03-07\1D\G29 ClipOnEdge': (27,),
+                                    r'Leaf 03-07\03-07\1D\G30 ClipOnVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\G31 ClipOnTop': (26, 29),
+                                    r'Leaf 03-07\03-07\1D\G32 ClipOnBot': (26, 29),
+                                    r'Leaf 03-07\03-07\1D\G33 ClipOnDiag': (0,),
+                                    r'Leaf 03-07\03-07\1D\G41 FacadeBot': (10,),
+                                    r'Leaf 03-07\03-07\1D\G43 ColumnHeadExt': (0,),
+                                    r'Leaf 03-07\03-07\1D\G44 ColHeadDiag': (0,),
+                                    r'Leaf 03-07\03-07\1D\G45 ColHeadVert': (0,),
+                                    r'Leaf 03-07\03-07\1D\G60 RooflightPrimary': (0,),
+                                    r'Leaf 03-07\03-07\1D\G61 RooflightSecondary': (34,),
+                                    r'Leaf 03-07\03-07\1D\G62 RooflightTertiary': (34, 35),
+                                    r'Leaf 03-07\03-07\1D\G63 RooflightUpstand': (0,),
+                                    r'Leaf 03-07\03-07\1D\G69 PileCap': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G70 ColumnBaseExt': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-1': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-2': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-3': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-4': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-5': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-6': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-7': (0,),
+                                    r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-8': (0,),
+                                    r'Leaf 03-07\03-07\1D\G80 EdgeArm': (0,),
+                                    r'Leaf 03-07\03-07\1D\G81 EdgeOuter': (48,),
+                                    r'Leaf 03-07\03-07\1D\G82 Outrigger': (0,),
+                                    r'Leaf 03-07\03-07\1D\G83 EdgePurlinTop': (27,),
+                                    r'Leaf 03-07\03-07\1D\G84 EdgePurlinBot': (28,),
+                                    r'Leaf 03-07\03-07\1D\G87 EdgeGutter': (27,),
+                                    r'Leaf 03-07\03-07\1D\G88 CatWalkStringer': (6, 10),
+                                    r'Leaf 03-07\03-07\1D\G89 LiftingBeam': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeMullionA': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeMullionB': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeMullionC': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeMullionD': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeTransomA': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeTransomB': (0,),
+                                    r'Leaf 03-07\03-07\Facade\FacadeTransomC': (0,),
+                                    r'Leaf 03-07\03-07\Facade\G40 FacadeHeaderA': (0,),
+                                    r'Leaf 03-07\03-07\Facade\G50 ClerestoryMullion': (0,),
+                                    r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\2D_ExhaustPanels': (0,),
+                                    r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\G90_ExhaustDummy': (0,),
+                                    r'Leaf 03-07\03-08\1D\3809 G69 Ground beams': (0,),
+                                    r'Leaf 03-07\03-08\1D\3809 QL_G09 EdgeTrussTop': (78,),
+                                    r'Leaf 03-07\03-08\1D\3810 QL_G10 EdgeTrussBot': (71, 76),
+                                    r'Leaf 03-07\03-08\1D\3811 QL_G11 EdgeTrussDiag': (0,),
+                                    r'Leaf 03-07\03-08\1D\3812 QL_G12 EdgeTrussVert': (0,),
+                                    r'Leaf 03-07\03-08\1D\3822 QL_G22 QLRoofSecondaryClerestory': (78,),
+                                    r'Leaf 03-07\03-08\1D\3823 QL_G23 QLRoofPurlin': (78,),
+                                    r'Leaf 03-07\03-08\1D\3829 QL_G29 ClipOnEdge': (75,),
+                                    r'Leaf 03-07\03-08\1D\3831 QL_G31 ClipOnTop': (78,),
+                                    r'Leaf 03-07\03-08\1D\3874 QL_G70 QLColumn': (0,),
+                                    r'Leaf 03-07\03-08\1D\3887 QL_G87 EdgeGutter': (75,),
+                                    r'Leaf 03-07\03-08\1D\3890 QL_G90 QLRoofPrimary': (76,),
+                                    r'Leaf 03-07\03-08\1D\3891 QL_G91 QLRoofSecondary': (78,),
+                                    r'Leaf 03-07\03-08\1D\3892 QL_G92 QLRoofBracing': (0,),
+                                    r'Leaf 03-07\03-08\1D\3893 QL_G93 QLCeilingPrimary': (76,),
+                                    r'Leaf 03-07\03-08\1D\3894 QL_G94 QLCeilingSecondary': (81,),
+                                    r'Leaf 03-07\03-08\1D\3895 QL_G95 QLCeilingPortal': (76,),
+                                    r'Leaf 03-07\03-08\1D\3896 QL_G96 QLCeilingNoggings': (82, 83),
+                                    r'Leaf 03-07\03-08\1D\3897 QL_G97 QLCeilingBracing': (0,),
+                                    r'Leaf 03-07\03-08\1D\3898 QL_G98 QLVerticalBracing': (0,),
+                                    r'Leaf 03-07\03-08\1D\3899 QL_G99 QLClipOnExtension': (0,),
+                                    r'Leaf 03-07\03-08\Facade\3850 QL_G50 Clerestory': (0,),
+                                    r'Leaf 03-07\03-08\Facade\3851 QL_G51 Mullion Typical': (0,),
+                                    r'Leaf 03-07\03-08\Facade\3854 QL_G54 Mullion Glazed': (0,),
+                                    r'Leaf 03-07\03-07\1D\E9x Exhaust': (9, 19)
+                                        }
+
+# 1, 2, 3, 4, 15, 16, and 66 within the _group_num_dict are redundant. Stair 03 and Stair 04 groups are excluded.
 _group_num_dict = {1: r'Leaf 03-07\03-07\1D\E9x Exhaust\E91 ExhaustSupport',
                    2: r'Leaf 03-07\03-07\1D\E9x Exhaust\E92 ExhaustVert',
                    3: r'Leaf 03-07\03-07\1D\E9x Exhaust\E93 ExhaustArc',
@@ -104,7 +390,6 @@ _group_num_dict = {1: r'Leaf 03-07\03-07\1D\E9x Exhaust\E91 ExhaustSupport',
                    90: r'Leaf 03-07\03-08\Facade\3854 QL_G54 Mullion Glazed',
                    91: r'Leaf 03-07\03-07\1D\E9x Exhaust',}
 
-
 _group_name_dict = {v: k for k, v in _group_num_dict.items()}
 
 
@@ -133,13 +418,13 @@ def get_groups_as_strings(groups: tuple[int, ...], own_group: str) -> tuple[str,
     return groups_as_strings
 
 
-def get_beam_joining_geometry(cursor: Cursor, groups: tuple[str, ...]) -> list[dict]:
+def get_beam_joining_geometry(bp_parq: str, nc_parq: str, groups: tuple[str, ...]) -> str:
     """
-    Creates the SQL query string for getting the relevant geometry for the
+    Creates the SQL write_full_beam_forces_query string for getting the relevant geometry for the
     BeamJoiner from the SQLite database.
     """
 
-    query = f'''SELECT
+    query = f"""SELECT
     BeamNumber,
     node1.X AS X1,
     node1.Y AS Y1,
@@ -149,14 +434,12 @@ def get_beam_joining_geometry(cursor: Cursor, groups: tuple[str, ...]) -> list[d
     node2.Z AS Z2,
     PropertyName,
     GroupName
-    FROM BeamProperties AS BP
-    JOIN NodalCoordinates AS node1 ON node1.NodeNumber = BP.N1
-    JOIN NodalCoordinates AS node2 ON node2.NodeNumber = BP.N2
-    WHERE GroupName IN ("{'", "'.join(g for g in groups)}");'''
+    FROM '{bp_parq}' AS BP
+    JOIN '{nc_parq}' AS node1 ON node1.NodeNumber = BP.N1
+    JOIN '{nc_parq}' AS node2 ON node2.NodeNumber = BP.N2
+    WHERE GroupName IN ('{"', '".join(g for g in groups)}');"""
 
-    geometry_results = [dict(r) for r in cursor.execute(query).fetchall()]
-
-    return geometry_results
+    return query
 
 
 def get_system_length(beam_groups: list[list[Beam]]) -> dict:
@@ -177,360 +460,72 @@ def rnd(f: float, precision=2):
 if __name__ == '__main__':
 
     # ----------------------------------------------------------------------
-    # FILE PATH INPUTS FOR THE STRAND DATABASES AND OUTPUT FILE
+    # ACCESS THE PARQUET FILES TO GET THE GEOMETRY
     # ----------------------------------------------------------------------
 
-    strand_db_fp = r"C:\Users\lisa.lin\Mott MacDonald\MBC SAM Project Portal - Task 17 - Prototype\WIP\01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\V1_4_4_LB_Gmax.db"
-
-    csv_fp = r"C:\Users\lisa.lin\Mott MacDonald\MBC SAM Project Portal - Task 17 - Prototype\WIP\01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\Effective_Lengths.csv"
-
-    # ----------------------------------------------------------------------
-    # DEFINES THE GROUPS THAT CAN BE USED FOR RESTRAINT OF ANOTHER GROUP FOR
-    # EACH INDIVIDUAL GROUP IN EACH INDIVIDUAL AXIS
-    # ----------------------------------------------------------------------
-
-    MAJOR_AXIS_RESTRAINT_GROUPS_DICT = {r'Leaf 03-07\03-07\1D\E9x Exhaust\E91 ExhaustSupport': (0,),
-                                        r'Leaf 03-07\03-07\1D\E9x Exhaust\E92 ExhaustVert': (0,),
-                                        r'Leaf 03-07\03-07\1D\E9x Exhaust\E93 ExhaustArc': (0,),
-                                        r'Leaf 03-07\03-07\1D\E9x Exhaust\E94 ExhaustBeam': (0,),
-                                        r'Leaf 03-07\03-07\1D\G01 PrimaryTop': (7, 8, 33),
-                                        r'Leaf 03-07\03-07\1D\G02 PrimaryBot': (7, 8, 33),
-                                        r'Leaf 03-07\03-07\1D\G03 PrimaryDiag': (0,),
-                                        r'Leaf 03-07\03-07\1D\G04 PrimaryVert': (0,),
-                                        r'Leaf 03-07\03-07\1D\G05 SecondaryTop': (5, 11, 12),
-                                        r'Leaf 03-07\03-07\1D\G06 SecondaryBot': (6, 11, 12),
-                                        r'Leaf 03-07\03-07\1D\G07 SecondaryDiag': (0,),
-                                        r'Leaf 03-07\03-07\1D\G08 SecondaryVert': (0,),
-                                        r'Leaf 03-07\03-07\1D\G09 EdgeTrussTop': (5, 9),
-                                        r'Leaf 03-07\03-07\1D\G10 EdgeTrussBot': (6, 10),
-                                        r'Leaf 03-07\03-07\1D\G11 EdgeTrussDiag': (0,),
-                                        r'Leaf 03-07\03-07\1D\G12 EdgeTrussVert': (0,),
-                                        r'Leaf 03-07\03-07\1D\G23 PurlinTop': (5, 9),
-                                        r'Leaf 03-07\03-07\1D\G24 PurlinBot': (6, 10),
-                                        r'Leaf 03-07\03-07\1D\G25 BracingClipOnTop': (0,),
-                                        r'Leaf 03-07\03-07\1D\G26 BracingClipOnBot': (0,),
-                                        r'Leaf 03-07\03-07\1D\G27 BracingPlanTop': (0,),
-                                        r'Leaf 03-07\03-07\1D\G28 BracingPlanBot': (0,),
-                                        r'Leaf 03-07\03-07\1D\G29 ClipOnEdge': (27,),
-                                        r'Leaf 03-07\03-07\1D\G30 ClipOnVert': (0,),
-                                        r'Leaf 03-07\03-07\1D\G31 ClipOnTop': (26,29),
-                                        r'Leaf 03-07\03-07\1D\G32 ClipOnBot': (26,29),
-                                        r'Leaf 03-07\03-07\1D\G33 ClipOnDiag': (0,),
-                                        r'Leaf 03-07\03-07\1D\G41 FacadeBot': (10,),
-                                        r'Leaf 03-07\03-07\1D\G43 ColumnHeadExt': (0,),
-                                        r'Leaf 03-07\03-07\1D\G44 ColHeadDiag': (0,),
-                                        r'Leaf 03-07\03-07\1D\G45 ColHeadVert': (0,),
-                                        r'Leaf 03-07\03-07\1D\G60 RooflightPrimary': (0,),
-                                        r'Leaf 03-07\03-07\1D\G61 RooflightSecondary': (34,),
-                                        r'Leaf 03-07\03-07\1D\G62 RooflightTertiary': (34, 35),
-                                        r'Leaf 03-07\03-07\1D\G63 RooflightUpstand': (0,),
-                                        r'Leaf 03-07\03-07\1D\G69 PileCap': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G70 ColumnBaseExt': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-1': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-2': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-3': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-4': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-5': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-6': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-7': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-8': (0,),
-                                        r'Leaf 03-07\03-07\1D\G80 EdgeArm': (0,),
-                                        r'Leaf 03-07\03-07\1D\G81 EdgeOuter': (48,),
-                                        r'Leaf 03-07\03-07\1D\G82 Outrigger': (0,),
-                                        r'Leaf 03-07\03-07\1D\G83 EdgePurlinTop': (27,),
-                                        r'Leaf 03-07\03-07\1D\G84 EdgePurlinBot': (28,),
-                                        r'Leaf 03-07\03-07\1D\G87 EdgeGutter': (27,),
-                                        r'Leaf 03-07\03-07\1D\G88 CatWalkStringer': (6, 10),
-                                        r'Leaf 03-07\03-07\1D\G89 LiftingBeam': (0,),
-                                        r'Leaf 03-07\03-07\Facade\FacadeMullionA': (0,),
-                                        r'Leaf 03-07\03-07\Facade\FacadeMullionB': (0,),
-                                        r'Leaf 03-07\03-07\Facade\FacadeMullionC': (0,),
-                                        r'Leaf 03-07\03-07\Facade\FacadeMullionD': (0,),
-                                        r'Leaf 03-07\03-07\Facade\FacadeTransomA': (0,),
-                                        r'Leaf 03-07\03-07\Facade\FacadeTransomB': (0,),
-                                        r'Leaf 03-07\03-07\Facade\FacadeTransomC': (0,),
-                                        r'Leaf 03-07\03-07\Facade\G40 FacadeHeaderA': (0,),
-                                        r'Leaf 03-07\03-07\Facade\G50 ClerestoryMullion': (0,),
-                                        r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\2D_ExhaustPanels': (0,),
-                                        r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\G90_ExhaustDummy': (0,),
-                                        r'Leaf 03-07\03-08\1D\3809 G69 Ground beams': (0,),
-                                        r'Leaf 03-07\03-08\1D\3809 QL_G09 EdgeTrussTop': (78,),
-                                        r'Leaf 03-07\03-08\1D\3810 QL_G10 EdgeTrussBot': (71, 76),
-                                        r'Leaf 03-07\03-08\1D\3811 QL_G11 EdgeTrussDiag': (0,),
-                                        r'Leaf 03-07\03-08\1D\3812 QL_G12 EdgeTrussVert': (0,),
-                                        r'Leaf 03-07\03-08\1D\3822 QL_G22 QLRoofSecondaryClerestory': (78,),
-                                        r'Leaf 03-07\03-08\1D\3823 QL_G23 QLRoofPurlin': (78,),
-                                        r'Leaf 03-07\03-08\1D\3829 QL_G29 ClipOnEdge': (75,),
-                                        r'Leaf 03-07\03-08\1D\3831 QL_G31 ClipOnTop': (78,),
-                                        r'Leaf 03-07\03-08\1D\3874 QL_G70 QLColumn': (0,),
-                                        r'Leaf 03-07\03-08\1D\3887 QL_G87 EdgeGutter': (75,),
-                                        r'Leaf 03-07\03-08\1D\3890 QL_G90 QLRoofPrimary': (76,),
-                                        r'Leaf 03-07\03-08\1D\3891 QL_G91 QLRoofSecondary': (78,),
-                                        r'Leaf 03-07\03-08\1D\3892 QL_G92 QLRoofBracing': (0,),
-                                        r'Leaf 03-07\03-08\1D\3893 QL_G93 QLCeilingPrimary': (76,),
-                                        r'Leaf 03-07\03-08\1D\3894 QL_G94 QLCeilingSecondary': (81,),
-                                        r'Leaf 03-07\03-08\1D\3895 QL_G95 QLCeilingPortal': (76,),
-                                        r'Leaf 03-07\03-08\1D\3896 QL_G96 QLCeilingNoggings': (82, 83),
-                                        r'Leaf 03-07\03-08\1D\3897 QL_G97 QLCeilingBracing': (0,),
-                                        r'Leaf 03-07\03-08\1D\3898 QL_G98 QLVerticalBracing': (0,),
-                                        r'Leaf 03-07\03-08\1D\3899 QL_G99 QLClipOnExtension': (0,),
-                                        r'Leaf 03-07\03-08\Facade\3850 QL_G50 Clerestory': (0,),
-                                        r'Leaf 03-07\03-08\Facade\3851 QL_G51 Mullion Typical': (0,),
-                                        r'Leaf 03-07\03-08\Facade\3854 QL_G54 Mullion Glazed': (0,),
-                                        r'Leaf 03-07\03-07\1D\E9x Exhaust': (9, 19),
-                                        }
-
-    MINOR_AXIS_RESTRAINT_GROUPS_DICT = {r'Leaf 03-07\03-07\1D\E9x Exhaust\E91 ExhaustSupport': (0,),
-                                        r'Leaf 03-07\03-07\1D\E9x Exhaust\E92 ExhaustVert': (0,),
-                                        r'Leaf 03-07\03-07\1D\E9x Exhaust\E93 ExhaustArc': (0,),
-                                        r'Leaf 03-07\03-07\1D\E9x Exhaust\E94 ExhaustBeam': (0,),
-                                        r'Leaf 03-07\03-07\1D\G01 PrimaryTop': (9, 23),
-                                        r'Leaf 03-07\03-07\1D\G02 PrimaryBot': (10, 24),
-                                        r'Leaf 03-07\03-07\1D\G03 PrimaryDiag': (0,),
-                                        r'Leaf 03-07\03-07\1D\G04 PrimaryVert': (0,),
-                                        r'Leaf 03-07\03-07\1D\G05 SecondaryTop': (5,),
-                                        r'Leaf 03-07\03-07\1D\G06 SecondaryBot': (6,),
-                                        r'Leaf 03-07\03-07\1D\G07 SecondaryDiag': (0,),
-                                        r'Leaf 03-07\03-07\1D\G08 SecondaryVert': (0,),
-                                        r'Leaf 03-07\03-07\1D\G09 EdgeTrussTop': (5, 9, 17, 18),
-                                        r'Leaf 03-07\03-07\1D\G10 EdgeTrussBot': (6, 10, 17, 18),
-                                        r'Leaf 03-07\03-07\1D\G11 EdgeTrussDiag': (0,),
-                                        r'Leaf 03-07\03-07\1D\G12 EdgeTrussVert': (0,),
-                                        r'Leaf 03-07\03-07\1D\G23 PurlinTop': (5, 9, 23),
-                                        r'Leaf 03-07\03-07\1D\G24 PurlinBot': (6, 10, 24),
-                                        r'Leaf 03-07\03-07\1D\G25 BracingClipOnTop': (0,),
-                                        r'Leaf 03-07\03-07\1D\G26 BracingClipOnBot': (0,),
-                                        r'Leaf 03-07\03-07\1D\G27 BracingPlanTop': (0,),
-                                        r'Leaf 03-07\03-07\1D\G28 BracingPlanBot': (0,),
-                                        r'Leaf 03-07\03-07\1D\G29 ClipOnEdge': (27,),
-                                        r'Leaf 03-07\03-07\1D\G30 ClipOnVert': (0,),
-                                        r'Leaf 03-07\03-07\1D\G31 ClipOnTop': (21,),
-                                        r'Leaf 03-07\03-07\1D\G32 ClipOnBot': (22,),
-                                        r'Leaf 03-07\03-07\1D\G33 ClipOnDiag': (0,),
-                                        r'Leaf 03-07\03-07\1D\G41 FacadeBot': (10,),
-                                        r'Leaf 03-07\03-07\1D\G43 ColumnHeadExt': (0,),
-                                        r'Leaf 03-07\03-07\1D\G44 ColHeadDiag': (0,),
-                                        r'Leaf 03-07\03-07\1D\G45 ColHeadVert': (0,),
-                                        r'Leaf 03-07\03-07\1D\G60 RooflightPrimary': (0,),
-                                        r'Leaf 03-07\03-07\1D\G61 RooflightSecondary': (34,),
-                                        r'Leaf 03-07\03-07\1D\G62 RooflightTertiary': (34, 35),
-                                        r'Leaf 03-07\03-07\1D\G63 RooflightUpstand': (0,),
-                                        r'Leaf 03-07\03-07\1D\G69 PileCap': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G70 ColumnBaseExt': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-1': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-2': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-3': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-4': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-5': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-6': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-7': (0,),
-                                        r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-8': (0,),
-                                        r'Leaf 03-07\03-07\1D\G80 EdgeArm': (0,),
-                                        r'Leaf 03-07\03-07\1D\G81 EdgeOuter': (48, 50),
-                                        r'Leaf 03-07\03-07\1D\G82 Outrigger': (0,),
-                                        r'Leaf 03-07\03-07\1D\G83 EdgePurlinTop': (27,),
-                                        r'Leaf 03-07\03-07\1D\G84 EdgePurlinBot': (28,),
-                                        r'Leaf 03-07\03-07\1D\G87 EdgeGutter': (27,),
-                                        r'Leaf 03-07\03-07\1D\G88 CatWalkStringer': (6, 10),
-                                        r'Leaf 03-07\03-07\1D\G89 LiftingBeam': (0,),
-                                        r'Leaf 03-07\03-07\Facade\FacadeMullionA': (0,),
-                                        r'Leaf 03-07\03-07\Facade\FacadeMullionB': (0,),
-                                        r'Leaf 03-07\03-07\Facade\FacadeMullionC': (0,),
-                                        r'Leaf 03-07\03-07\Facade\FacadeMullionD': (0,),
-                                        r'Leaf 03-07\03-07\Facade\FacadeTransomA': (0,),
-                                        r'Leaf 03-07\03-07\Facade\FacadeTransomB': (0,),
-                                        r'Leaf 03-07\03-07\Facade\FacadeTransomC': (0,),
-                                        r'Leaf 03-07\03-07\Facade\G40 FacadeHeaderA': (0,),
-                                        r'Leaf 03-07\03-07\Facade\G50 ClerestoryMullion': (0,),
-                                        r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\2D_ExhaustPanels': (0,),
-                                        r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\G90_ExhaustDummy': (0,),
-                                        r'Leaf 03-07\03-08\1D\3809 G69 Ground beams': (0,),
-                                        r'Leaf 03-07\03-08\1D\3809 QL_G09 EdgeTrussTop': (78, 70),
-                                        r'Leaf 03-07\03-08\1D\3810 QL_G10 EdgeTrussBot': (70,),
-                                        r'Leaf 03-07\03-08\1D\3811 QL_G11 EdgeTrussDiag': (0,),
-                                        r'Leaf 03-07\03-08\1D\3812 QL_G12 EdgeTrussVert': (0,),
-                                        r'Leaf 03-07\03-08\1D\3822 QL_G22 QLRoofSecondaryClerestory': (78,),
-                                        r'Leaf 03-07\03-08\1D\3823 QL_G23 QLRoofPurlin': (78,),
-                                        r'Leaf 03-07\03-08\1D\3829 QL_G29 ClipOnEdge': (75,),
-                                        r'Leaf 03-07\03-08\1D\3831 QL_G31 ClipOnTop': (0,),
-                                        r'Leaf 03-07\03-08\1D\3874 QL_G70 QLColumn': (0,),
-                                        r'Leaf 03-07\03-08\1D\3887 QL_G87 EdgeGutter': (75,),
-                                        r'Leaf 03-07\03-08\1D\3890 QL_G90 QLRoofPrimary': (76, 79, 80),
-                                        r'Leaf 03-07\03-08\1D\3891 QL_G91 QLRoofSecondary': (78, 80),
-                                        r'Leaf 03-07\03-08\1D\3892 QL_G92 QLRoofBracing': (0,),
-                                        r'Leaf 03-07\03-08\1D\3893 QL_G93 QLCeilingPrimary': (76,),
-                                        r'Leaf 03-07\03-08\1D\3894 QL_G94 QLCeilingSecondary': (81, 84, 85),
-                                        r'Leaf 03-07\03-08\1D\3895 QL_G95 QLCeilingPortal': (81, 84, 85),
-                                        r'Leaf 03-07\03-08\1D\3896 QL_G96 QLCeilingNoggings': (82, 83),
-                                        r'Leaf 03-07\03-08\1D\3897 QL_G97 QLCeilingBracing': (0,),
-                                        r'Leaf 03-07\03-08\1D\3898 QL_G98 QLVerticalBracing': (0,),
-                                        r'Leaf 03-07\03-08\1D\3899 QL_G99 QLClipOnExtension': (0,),
-                                        r'Leaf 03-07\03-08\Facade\3850 QL_G50 Clerestory': (0,),
-                                        r'Leaf 03-07\03-08\Facade\3851 QL_G51 Mullion Typical': (0,),
-                                        r'Leaf 03-07\03-08\Facade\3854 QL_G54 Mullion Glazed': (0,),
-                                        r'Leaf 03-07\03-07\1D\E9x Exhaust': (9, 19),
-                                        }
-
-    TORSIONAL_AXIS_RESTRAINT_GROUPS_DICT = {r'Leaf 03-07\03-07\1D\E9x Exhaust\E91 ExhaustSupport': (0,),
-                                            r'Leaf 03-07\03-07\1D\E9x Exhaust\E92 ExhaustVert': (0,),
-                                            r'Leaf 03-07\03-07\1D\E9x Exhaust\E93 ExhaustArc': (0,),
-                                            r'Leaf 03-07\03-07\1D\E9x Exhaust\E94 ExhaustBeam': (0,),
-                                            r'Leaf 03-07\03-07\1D\G01 PrimaryTop': (9, 23),
-                                            r'Leaf 03-07\03-07\1D\G02 PrimaryBot': (10, 24),
-                                            r'Leaf 03-07\03-07\1D\G03 PrimaryDiag': (0,),
-                                            r'Leaf 03-07\03-07\1D\G04 PrimaryVert': (0,),
-                                            r'Leaf 03-07\03-07\1D\G05 SecondaryTop': (5,),
-                                            r'Leaf 03-07\03-07\1D\G06 SecondaryBot': (6,),
-                                            r'Leaf 03-07\03-07\1D\G07 SecondaryDiag': (0,),
-                                            r'Leaf 03-07\03-07\1D\G08 SecondaryVert': (0,),
-                                            r'Leaf 03-07\03-07\1D\G09 EdgeTrussTop': (5, 9, 17, 18),
-                                            r'Leaf 03-07\03-07\1D\G10 EdgeTrussBot': (6, 10, 17, 18),
-                                            r'Leaf 03-07\03-07\1D\G11 EdgeTrussDiag': (0,),
-                                            r'Leaf 03-07\03-07\1D\G12 EdgeTrussVert': (0,),
-                                            r'Leaf 03-07\03-07\1D\G23 PurlinTop': (5, 9, 23),
-                                            r'Leaf 03-07\03-07\1D\G24 PurlinBot': (6, 10, 24),
-                                            r'Leaf 03-07\03-07\1D\G25 BracingClipOnTop': (0,),
-                                            r'Leaf 03-07\03-07\1D\G26 BracingClipOnBot': (0,),
-                                            r'Leaf 03-07\03-07\1D\G27 BracingPlanTop': (0,),
-                                            r'Leaf 03-07\03-07\1D\G28 BracingPlanBot': (0,),
-                                            r'Leaf 03-07\03-07\1D\G29 ClipOnEdge': (27,),
-                                            r'Leaf 03-07\03-07\1D\G30 ClipOnVert': (0,),
-                                            r'Leaf 03-07\03-07\1D\G31 ClipOnTop': (21,),
-                                            r'Leaf 03-07\03-07\1D\G32 ClipOnBot': (22,),
-                                            r'Leaf 03-07\03-07\1D\G33 ClipOnDiag': (0,),
-                                            r'Leaf 03-07\03-07\1D\G41 FacadeBot': (10,),
-                                            r'Leaf 03-07\03-07\1D\G43 ColumnHeadExt': (0,),
-                                            r'Leaf 03-07\03-07\1D\G44 ColHeadDiag': (0,),
-                                            r'Leaf 03-07\03-07\1D\G45 ColHeadVert': (0,),
-                                            r'Leaf 03-07\03-07\1D\G60 RooflightPrimary': (0,),
-                                            r'Leaf 03-07\03-07\1D\G61 RooflightSecondary': (34,),
-                                            r'Leaf 03-07\03-07\1D\G62 RooflightTertiary': (34, 35),
-                                            r'Leaf 03-07\03-07\1D\G63 RooflightUpstand': (0,),
-                                            r'Leaf 03-07\03-07\1D\G69 PileCap': (0,),
-                                            r'Leaf 03-07\03-07\1D\G7x Column\G70 ColumnBaseExt': (0,),
-                                            r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-1': (0,),
-                                            r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-2': (0,),
-                                            r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-3': (0,),
-                                            r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-4': (0,),
-                                            r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-5': (0,),
-                                            r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-6': (0,),
-                                            r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-7': (0,),
-                                            r'Leaf 03-07\03-07\1D\G7x Column\G71 PrimaryColumn-8': (0,),
-                                            r'Leaf 03-07\03-07\1D\G80 EdgeArm': (0,),
-                                            r'Leaf 03-07\03-07\1D\G81 EdgeOuter': (48, 50),
-                                            r'Leaf 03-07\03-07\1D\G82 Outrigger': (0,),
-                                            r'Leaf 03-07\03-07\1D\G83 EdgePurlinTop': (27,),
-                                            r'Leaf 03-07\03-07\1D\G84 EdgePurlinBot': (28,),
-                                            r'Leaf 03-07\03-07\1D\G87 EdgeGutter': (27,),
-                                            r'Leaf 03-07\03-07\1D\G88 CatWalkStringer': (6, 10),
-                                            r'Leaf 03-07\03-07\1D\G89 LiftingBeam': (0,),
-                                            r'Leaf 03-07\03-07\Facade\FacadeMullionA': (0,),
-                                            r'Leaf 03-07\03-07\Facade\FacadeMullionB': (0,),
-                                            r'Leaf 03-07\03-07\Facade\FacadeMullionC': (0,),
-                                            r'Leaf 03-07\03-07\Facade\FacadeMullionD': (0,),
-                                            r'Leaf 03-07\03-07\Facade\FacadeTransomA': (0,),
-                                            r'Leaf 03-07\03-07\Facade\FacadeTransomB': (0,),
-                                            r'Leaf 03-07\03-07\Facade\FacadeTransomC': (0,),
-                                            r'Leaf 03-07\03-07\Facade\G40 FacadeHeaderA': (0,),
-                                            r'Leaf 03-07\03-07\Facade\G50 ClerestoryMullion': (0,),
-                                            r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\2D_ExhaustPanels': (0,),
-                                            r'Leaf 03-07\03-07\Non-Structural\ExhaustHood\G90_ExhaustDummy': (0,),
-                                            r'Leaf 03-07\03-08\1D\3809 G69 Ground beams': (0,),
-                                            r'Leaf 03-07\03-08\1D\3809 QL_G09 EdgeTrussTop': (78, 70),
-                                            r'Leaf 03-07\03-08\1D\3810 QL_G10 EdgeTrussBot': (70,),
-                                            r'Leaf 03-07\03-08\1D\3811 QL_G11 EdgeTrussDiag': (0,),
-                                            r'Leaf 03-07\03-08\1D\3812 QL_G12 EdgeTrussVert': (0,),
-                                            r'Leaf 03-07\03-08\1D\3822 QL_G22 QLRoofSecondaryClerestory': (78,),
-                                            r'Leaf 03-07\03-08\1D\3823 QL_G23 QLRoofPurlin': (78,),
-                                            r'Leaf 03-07\03-08\1D\3829 QL_G29 ClipOnEdge': (75,),
-                                            r'Leaf 03-07\03-08\1D\3831 QL_G31 ClipOnTop': (0,),
-                                            r'Leaf 03-07\03-08\1D\3874 QL_G70 QLColumn': (0,),
-                                            r'Leaf 03-07\03-08\1D\3887 QL_G87 EdgeGutter': (75,),
-                                            r'Leaf 03-07\03-08\1D\3890 QL_G90 QLRoofPrimary': (76, 79, 80),
-                                            r'Leaf 03-07\03-08\1D\3891 QL_G91 QLRoofSecondary': (78, 80),
-                                            r'Leaf 03-07\03-08\1D\3892 QL_G92 QLRoofBracing': (0,),
-                                            r'Leaf 03-07\03-08\1D\3893 QL_G93 QLCeilingPrimary': (76,),
-                                            r'Leaf 03-07\03-08\1D\3894 QL_G94 QLCeilingSecondary': (81, 84, 85),
-                                            r'Leaf 03-07\03-08\1D\3895 QL_G95 QLCeilingPortal': (81, 84, 85),
-                                            r'Leaf 03-07\03-08\1D\3896 QL_G96 QLCeilingNoggings': (82, 83),
-                                            r'Leaf 03-07\03-08\1D\3897 QL_G97 QLCeilingBracing': (0,),
-                                            r'Leaf 03-07\03-08\1D\3898 QL_G98 QLVerticalBracing': (0,),
-                                            r'Leaf 03-07\03-08\1D\3899 QL_G99 QLClipOnExtension': (0,),
-                                            r'Leaf 03-07\03-08\Facade\3850 QL_G50 Clerestory': (0,),
-                                            r'Leaf 03-07\03-08\Facade\3851 QL_G51 Mullion Typical': (0,),
-                                            r'Leaf 03-07\03-08\Facade\3854 QL_G54 Mullion Glazed': (0,),
-                                            r'Leaf 03-07\03-07\1D\E9x Exhaust': (9, 19),
-                                            }
-
-    # ----------------------------------------------------------------------
-    # ACCESS THE SQLITE DATABASE TO GET THE GEOMETRY
-    # ----------------------------------------------------------------------
-
-    connection = connect(strand_db_fp)
-    connection.row_factory = Row
-
-    cursor = connection.cursor()
+    with duckdb.connect() as conn:
 
     # ----------------------------------------------------------------------
     # ITERATE THROUGH THE INPUTS AND WRITE THE EFFECTIVE LENGTHS FOR THE
     # DC LIGHTNING DESIGN RUNS TO A CSV
     # ----------------------------------------------------------------------
 
-    with open(csv_fp, 'w+', newline="") as csv_file:
-        writer = csv.writer(csv_file)
+        with open(csv_fp, 'w+', newline="") as csv_file:
+            writer = csv.writer(csv_file)
 
-        # Write headers
-        headers = ["BeamNumber", "GroupName", "L_crT", "L_cry", "L_crz", "L_c", "C_1", "C2", "z_g", "C_my", "C_mz", "C_mLT"]
-        writer.writerow(headers)
+            # Write headers
+            headers = ["BeamNumber", "GroupName", "L_crT", "L_cry", "L_crz", "L_c", "C_1", "C_2", "z_g", "C_my", "C_mz", "C_mLT"]
+            writer.writerow(headers)
 
-        for group_name in MAJOR_AXIS_RESTRAINT_GROUPS_DICT.keys():
-            # Get the group integers
-            major_axis_restraint_groups = MAJOR_AXIS_RESTRAINT_GROUPS_DICT[group_name]
-            minor_axis_restraint_groups = MINOR_AXIS_RESTRAINT_GROUPS_DICT[group_name]
-            torsional_axis_restraint_groups = TORSIONAL_AXIS_RESTRAINT_GROUPS_DICT[group_name]
+            for group_name in MAJOR_AXIS_RESTRAINT_GROUPS_DICT.keys():
+                # Get the group integers
+                major_axis_restraint_groups = MAJOR_AXIS_RESTRAINT_GROUPS_DICT[group_name]
+                minor_axis_restraint_groups = MINOR_AXIS_RESTRAINT_GROUPS_DICT[group_name]
+                torsional_axis_restraint_groups = TORSIONAL_AXIS_RESTRAINT_GROUPS_DICT[group_name]
 
-            # Get the equivalent string names
-            major_axis_restraint_group_names = get_groups_as_strings(major_axis_restraint_groups, own_group=group_name)
-            minor_axis_restraint_group_names = get_groups_as_strings(minor_axis_restraint_groups, own_group=group_name)
-            torsional_axis_restraint_group_names = get_groups_as_strings(torsional_axis_restraint_groups, own_group=group_name)
+                # Get the equivalent string names
+                major_axis_restraint_group_names = get_groups_as_strings(major_axis_restraint_groups, own_group=group_name)
+                minor_axis_restraint_group_names = get_groups_as_strings(minor_axis_restraint_groups, own_group=group_name)
+                torsional_axis_restraint_group_names = get_groups_as_strings(torsional_axis_restraint_groups, own_group=group_name)
 
-            # Use these to query the database
-            major_axis_geometry_data = get_beam_joining_geometry(cursor, major_axis_restraint_group_names)
-            minor_axis_geometry_data = get_beam_joining_geometry(cursor, minor_axis_restraint_group_names)
-            torsional_axis_geometry_data = get_beam_joining_geometry(cursor, torsional_axis_restraint_group_names)
+                # Use these to write_full_beam_forces_query the database
+                major_axis_length_query = get_beam_joining_geometry(bp_parq, nc_parq, major_axis_restraint_group_names)
+                minor_axis_length_query = get_beam_joining_geometry(bp_parq, nc_parq, minor_axis_restraint_group_names)
+                torsional_axis_length_query = get_beam_joining_geometry(bp_parq, nc_parq, torsional_axis_restraint_group_names)
 
-            # With the geometry, use the BeamJoiner class to determine the effective lengths
-            major_axis_beams = [
-                Beam(d["BeamNumber"], (d["X1"], d["Y1"], d["Z1"]), (d["X2"], d["Y2"], d["Z2"]), d["PropertyName"],
-                     group=d["GroupName"]) for d in major_axis_geometry_data]
+                major_axis_geometry_data = conn.execute(major_axis_length_query).fetchall()
+                minor_axis_geometry_data = conn.execute(minor_axis_length_query).fetchall()
+                torsional_axis_geometry_data = conn.execute(torsional_axis_length_query).fetchall()
 
-            minor_axis_beams = [
-                Beam(d["BeamNumber"], (d["X1"], d["Y1"], d["Z1"]), (d["X2"], d["Y2"], d["Z2"]), d["PropertyName"],
-                     group=d["GroupName"]) for d in minor_axis_geometry_data]
+                # With the geometry, use the BeamJoiner class to determine the effective lengths
+                major_axis_beams = [
+                    Beam(d[0], tuple(d[1:4]), tuple(d[4:7]), d[7], d[8]) for d in major_axis_geometry_data]
 
-            torsional_axis_beams = [
-                Beam(d["BeamNumber"], (d["X1"], d["Y1"], d["Z1"]), (d["X2"], d["Y2"], d["Z2"]), d["PropertyName"],
-                     group=d["GroupName"]) for d in torsional_axis_geometry_data]
+                minor_axis_beams = [
+                    Beam(d[0], tuple(d[1:4]), tuple(d[4:7]), d[7], d[8]) for d in minor_axis_geometry_data]
 
-            print("Forming beam joiner for major axis...")
-            major_axis_beam_joiner = BeamJoiner(major_axis_beams, target_groups=(group_name,))
-            print("Forming beam joiner for minor axis...")
-            minor_axis_beam_joiner = BeamJoiner(minor_axis_beams, target_groups=(group_name,))
-            print("Forming beam joiner for torsional axis...")
-            torsional_axis_beam_joiner = BeamJoiner(torsional_axis_beams, target_groups=(group_name,))
+                torsional_axis_beams = [
+                    Beam(d[0], tuple(d[1:4]), tuple(d[4:7]), d[7], d[8]) for d in torsional_axis_geometry_data]
 
-            major_groups = major_axis_beam_joiner.beam_groups
-            minor_groups = minor_axis_beam_joiner.beam_groups
-            torsional_groups = torsional_axis_beam_joiner.beam_groups
+                print("Forming beam joiner for major axis...")
+                major_axis_beam_joiner = BeamJoiner(major_axis_beams, tolerance=0.1, target_groups=(group_name,))
+                print("Forming beam joiner for minor axis...")
+                minor_axis_beam_joiner = BeamJoiner(minor_axis_beams, tolerance=0.1, target_groups=(group_name,))
+                print("Forming beam joiner for torsional axis...")
+                torsional_axis_beam_joiner = BeamJoiner(torsional_axis_beams, tolerance=0.1, target_groups=(group_name,))
 
-            major_axis_length_dict = get_system_length(major_groups)
-            minor_axis_length_dict = get_system_length(minor_groups)
-            torsional_axis_length_dict = get_system_length(torsional_groups)
+                major_groups = major_axis_beam_joiner.beam_groups
+                minor_groups = minor_axis_beam_joiner.beam_groups
+                torsional_groups = torsional_axis_beam_joiner.beam_groups
 
-            for beam_number in major_axis_length_dict.keys():
-                major_length = major_axis_length_dict[beam_number]
-                minor_length = minor_axis_length_dict[beam_number]
-                torsional_length = torsional_axis_length_dict[beam_number]
-                writer.writerow([beam_number, group_name, torsional_length, major_length, minor_length, minor_length, 1, 0, 0, 1, 1, 1])
+                major_axis_length_dict = get_system_length(major_groups)
+                minor_axis_length_dict = get_system_length(minor_groups)
+                torsional_axis_length_dict = get_system_length(torsional_groups)
+
+                for beam_number in major_axis_length_dict.keys():
+                    major_length = major_axis_length_dict[beam_number]
+                    minor_length = minor_axis_length_dict[beam_number]
+                    torsional_length = torsional_axis_length_dict[beam_number]
+                    writer.writerow([beam_number, group_name, torsional_length, major_length, minor_length, minor_length, 1, 0, 0, 1, 1, 1])
 
 

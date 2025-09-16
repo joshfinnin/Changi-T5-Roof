@@ -1,9 +1,8 @@
-import pathlib
+
 import duckdb
 import time
 from inputs import (section_data, perm_beam_forces_filtered_parq, perm_beam_properties_parq,
-                    als_summary_parq_folder_dict)
-from QL_inputs import CAL_10, CAL_13
+                    als_summary_parq_folder_dict, result_directory, connection_group_name)
 
 if __name__ == '__main__':
 
@@ -11,14 +10,11 @@ if __name__ == '__main__':
         paths = [perm_beam_forces_filtered_parq] + [parq for parq in als_summary_parq_folder_dict.values()]
         paths = [str(p) for p in paths]
 
-        # TODO UPDATE SPREADSHEET NAMES BELOW
-        group_name = "Secondary Truss Splices"
-        result_directory = pathlib.Path(r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\Secondary Truss Splice Reactions")
-        combined_force_outputs = result_directory / f"{group_name}_Combined_Forces.csv"
-        extrema_envelope_outputs = result_directory / f"{group_name}_Extrema_Envelope_Forces.csv"
-        critical_combination_sets_outputs = result_directory / f"{group_name}_Critical_Combination_Forces.csv"
-        coincident_forces_outputs = result_directory / f"{group_name}_Extrema_Coincident_Forces.csv"
-        complete_envelope_outputs = result_directory / f"{group_name}_Complete_Envelope_Forces.csv"
+        combined_force_outputs = result_directory / f"{connection_group_name}_Combined_Forces.csv"
+        extrema_envelope_outputs = result_directory / f"{connection_group_name}_Extrema_Envelope_Forces.csv"
+        critical_combination_sets_outputs = result_directory / f"{connection_group_name}_Critical_Combination_Forces.csv"
+        coincident_forces_outputs = result_directory / f"{connection_group_name}_Extrema_Coincident_Forces.csv"
+        complete_envelope_outputs = result_directory / f"{connection_group_name}_Complete_Envelope_Forces.csv"
 
         # CONVERT THE SECTION PROPERTIES TO A LOOKUP TABLE (CHANGE THIS TO A DIRECT CSV READ LATER)
         sections = ",\n".join(str(t) for t in section_data)

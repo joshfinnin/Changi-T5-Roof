@@ -1,5 +1,4 @@
 
-import pathlib
 import duckdb
 import time
 from inputs import (section_data, perm_beam_forces_filtered_parq, node_data,
@@ -11,8 +10,6 @@ if __name__ == '__main__':
     paths = [perm_beam_forces_filtered_parq] + [parq for parq in als_summary_parq_folder_dict.values()]
     paths = [str(p) for p in paths]
     sections = ",\n".join(str(t) for t in section_data)
-
-    # TODO UPDATE SPREADSHEET NAMES BELOW
 
     combined_force_outputs = result_directory / f"{connection_group_name}_Combined_Forces.csv"
     extrema_force_outputs = result_directory / f"{connection_group_name}_Extrema_Envelope_Forces.csv"

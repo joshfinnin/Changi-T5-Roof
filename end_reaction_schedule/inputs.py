@@ -5,16 +5,16 @@ import csv
 # ----------------------------------------------------------------------
 # FILE PATH INPUTS
 # ----------------------------------------------------------------------
-parq_output_directory = pathlib.Path(r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\Tandem Truss Bracing and Purlin Nodes\Filtered Parquet_with_lifting")
-connection_group_name = "Tandem Truss Bracing and Purlin Nodes_with_lifting"
+parq_output_directory = pathlib.Path(r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\Main Column Baseplates\Filtered_Parquet")
+connection_group_name = "Main Column Baseplates"
 result_directory = pathlib.Path(
-    r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\Tandem Truss Bracing and Purlin Nodes")
+    r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\Main Column Baseplates")
 
 # ----------------------------------------------------------------------
 # INPUT FOR SPLICE CONNECTION BEAM NUMBERS AND POSITIONS TO QUERY
 # ----------------------------------------------------------------------
 # NOTE: This is not used if extracting nodal forces
-splice_input_csv = r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\Secondary Truss Splice Reactions\Splice_Positions.csv"
+splice_input_csv = r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\Main Column Baseplates\Column Base Points.csv"
 with open(splice_input_csv, 'r') as splice_file:
     splice_positions = [r for r in csv.reader(splice_file)][1:]  # Ignore headers
     splice_data = tuple((int(s[0]), float(s[1])) for s in splice_positions)
@@ -23,7 +23,7 @@ with open(splice_input_csv, 'r') as splice_file:
 # INPUT FOR NODAL LOCATIONS TO QUERY
 # ----------------------------------------------------------------------
 # NOTE: This is not used if extracting splice forces
-node_number_csv = r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\Tandem Truss Bracing and Purlin Nodes\Tandem Truss Bracing and Purlin Nodes_with_lifting.csv"
+node_number_csv = r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\QL\CAL 12 Group 14 Nodes.csv"
 with open(node_number_csv, 'r') as node_file:
     nodes = [r for r in csv.reader(node_file)][1:]  # Ignore headers
     node_data = tuple(int(n[0]) for n in nodes)
@@ -207,6 +207,7 @@ als_models = [r"0 ALS Removal P-TR01a-01",
               r"140 ALS Removal S-TR10-05",
               r"141 ALS Removal S-TR13-05",
               r"142 ALS Removal S-TR14-05"]
+
 
 als_force_parq_dict = {m: als_directory / f"{m}\\beam_forces.parquet" for m in als_models}
 als_prop_parq_dict = {m: als_directory / f"{m}\\beam_properties.parquet" for m in als_models}
