@@ -2,70 +2,121 @@
 """
 database_extractor.py
 
-Module to extract the analysis results from a Strand7 model into a SQLite database.
-Have added support for producing parquet files of results.
+Module to extract the analysis results from a Strand7 model into a SQLite database or Parquet files.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 import ctypes
 from sqlite3 import Connection, Cursor, connect
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 import os
-import time
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 import pathlib
 from getpass import getuser
-
-# Import the St7API module
+import logging
 import St7API as St7
+from St7API import kMaxStrLen
+
+_PLATE_LOCAL_STRESS_SCHEMA = pa.schema([("Sxx", pa.float64()),
+                                        ("Syy", pa.float64()),
+                                        ("Szz", pa.float64()),
+                                        ("Sxy", pa.float64()),
+                                        ("Syz", pa.float64()),
+                                        ("Sxz", pa.float64())])
+
+_PLATE_DERIVED_STRESS_SCHEMA = pa.schema([("S11", pa.float64()),
+                                          ("S22", pa.float64()),
+                                          ("PrincipalAngle", pa.float64()),
+                                          ("VonMises", pa.float64()),
+                                          ("Tresca", pa.float64()),
+                                          ("MohrCoulomb", pa.float64()),
+                                          ("DruckerPrager", pa.float64()),
+                                          ("YieldIndex", pa.float64()),
+                                          ("MaxAbsPrincipal", pa.float64())])
+
+_PLATE_PROPERTIES_SCHEMA = pa.schema([("PlateNumber", pa.int32()),
+                                      ("PropertyName", pa.string()),
+                                      ("PropertyType", pa.string()),
+                                      ("ElementType", pa.string()),
+                                      ("GroupName", pa.string()),
+                                      ("PlateIDNumber", pa.int32()),
+                                      ("Area", pa.float64()),
+                                      ("N1", pa.int32()),
+                                      ("N2", pa.int32()),
+                                      ("N3", pa.int32()),
+                                      ("N4", pa.int32())])
+
+_PLATE_LOADING_SCHEMA = pa.schema([("PlateNumber", pa.int32()),
+                                   ("LoadCase", pa.int32()),
+                                   ("LoadCaseName", pa.string()),
+                                   ("NormalZPosPressure", pa.float64()),
+                                   ("NormalZNegPressure", pa.float64()),
+                                   ("GlobalXPressure", pa.float64()),
+                                   ("GlobalYPressure", pa.float64()),
+                                   ("GlobalZPressure", pa.float64()),
+                                   ("ShearXLocPressure", pa.float64()),
+                                   ("ShearYLocPressure", pa.float64())])
 
 _BEAM_FORCE_SCHEMA = pa.schema([
     ("ResultId", pa.string()),
     ("BeamNumber", pa.int32()),
     ("ResultCase", pa.int32()),
     ("ResultCaseName", pa.string()),
-    ("Position", pa.float16()),
-    ("Fx", pa.float32()),
-    ("Fy", pa.float32()),
-    ("Fz", pa.float32()),
-    ("Mx", pa.float32()),
-    ("My", pa.float32()),
-    ("Mz", pa.float32())
+    ("Position", pa.float64()),
+    ("Fx", pa.float64()),
+    ("Fy", pa.float64()),
+    ("Fz", pa.float64()),
+    ("Mx", pa.float64()),
+    ("My", pa.float64()),
+    ("Mz", pa.float64())
 ])
 
 _BEAM_PROPERTIES_SCHEMA = pa.schema([
     ("BeamNumber", pa.int32()),
     ("N1", pa.int32()),
     ("N2", pa.int32()),
-    ("Length", pa.float32()),
+    ("Length", pa.float64()),
     ("PropertyName", pa.string()),
     ("GroupName", pa.string()),
     ("BeamIDNumber", pa.int32()),
-    ("Dir1_X", pa.float32()),
-    ("Dir1_Y", pa.float32()),
-    ("Dir1_Z", pa.float32()),
-    ("Dir2_X", pa.float32()),
-    ("Dir2_Y", pa.float32()),
-    ("Dir2_Z", pa.float32()),
-    ("Dir3_X", pa.float32()),
-    ("Dir3_Y", pa.float32()),
-    ("Dir3_Z", pa.float32())
+    ("Dir1_X", pa.float64()),
+    ("Dir1_Y", pa.float64()),
+    ("Dir1_Z", pa.float64()),
+    ("Dir2_X", pa.float64()),
+    ("Dir2_Y", pa.float64()),
+    ("Dir2_Z", pa.float64()),
+    ("Dir3_X", pa.float64()),
+    ("Dir3_Y", pa.float64()),
+    ("Dir3_Z", pa.float64())
 ])
+
+# WIP SCHEMA FOR BEAM LOADING - LOAD IDS MAKE THIS DIFFICULT
+_BEAM_LOADING_SCHEMA = pa.schema([("BeamNumber", pa.int32()),
+                                  ("LoadCase", pa.int32()),
+                                  ("LoadCaseName", pa.string()),
+                                  ("PrincXDist", pa.float64()),
+                                  ("PrincYDist", pa.float64()),
+                                  ("PrincZDist", pa.float64()),
+                                  ("GlobXDist", pa.float64()),
+                                  ("GlobYDist", pa.float64()),
+                                  ("GlobZDist", pa.float64()),
+                                  ("PrincXPoint", pa.float64())])
 
 _NODAL_REACTIONS_SCHEMA = pa.schema([
     ("ResultId", pa.string()),
     ("NodeNumber", pa.int32()),
     ("ResultCase", pa.int32()),
     ("ResultCaseName", pa.string()),
-    ("Rx", pa.float32()),
-    ("Ry", pa.float32()),
-    ("Rz", pa.float32()),
-    ("Rxx", pa.float32()),
-    ("Ryy", pa.float32()),
-    ("Rzz", pa.float32())
+    ("Rx", pa.float64()),
+    ("Ry", pa.float64()),
+    ("Rz", pa.float64()),
+    ("Rxx", pa.float64()),
+    ("Ryy", pa.float64()),
+    ("Rzz", pa.float64())
 ])
 
 _NODAL_DISPLACEMENTS_SCHEMA = pa.schema([
@@ -73,33 +124,49 @@ _NODAL_DISPLACEMENTS_SCHEMA = pa.schema([
     ("NodeNumber", pa.int32()),
     ("ResultCase", pa.int32()),
     ("ResultCaseName", pa.string()),
-    ("Dx", pa.float32()),
-    ("Dy", pa.float32()),
-    ("Dz", pa.float32()),
-    ("Dxx", pa.float32()),
-    ("Dyy", pa.float32()),
-    ("Dzz", pa.float32())
+    ("Dx", pa.float64()),
+    ("Dy", pa.float64()),
+    ("Dz", pa.float64()),
+    ("Dxx", pa.float64()),
+    ("Dyy", pa.float64()),
+    ("Dzz", pa.float64())
 ])
 
 _NODAL_COORDINATES_SCHEMA = pa.schema([
     ("NodeNumber", pa.int32()),
-    ("X", pa.float32()),
-    ("Y", pa.float32()),
-    ("Z", pa.float32())
+    ("X", pa.float64()),
+    ("Y", pa.float64()),
+    ("Z", pa.float64())
 ])
+
+# WIP SCHEMA FOR NODAL LOADING - LOAD IDS MAKE THIS DIFFICULT
+_NODAL_LOADING_SCHEMA = pa.schema([])
 
 SCHEMAS = {"BeamForces": _BEAM_FORCE_SCHEMA,
            "BeamProperties": _BEAM_PROPERTIES_SCHEMA,
            "NodalReactions": _NODAL_REACTIONS_SCHEMA,
            "NodalDisplacements": _NODAL_DISPLACEMENTS_SCHEMA,
-           "NodalCoordinates": _NODAL_COORDINATES_SCHEMA}
+           "NodalCoordinates": _NODAL_COORDINATES_SCHEMA,
+           "PlateLocalStresses": _PLATE_LOCAL_STRESS_SCHEMA,
+           "PlateCombinedStresses": _PLATE_DERIVED_STRESS_SCHEMA,
+           "PlateProperties": _PLATE_PROPERTIES_SCHEMA,
+           "PlateLoading": _PLATE_LOADING_SCHEMA}
 
+
+def _log_error_message(err_code: int):
+    message = St7.St7GetAPIErrorString(err_code, St7.kMaxStrLen).value.decode()
+    print(message)
 
 def _clear_lists(lists_to_clear: tuple):
     """Convenience function for clearing lists."""
     for lst in lists_to_clear:
         lst.clear()
 
+def _create_parq_table(writer: pq.ParquetWriter, lists_to_process: tuple, schema: pa.Schema):
+    array = list(pa.array(data) for data in lists_to_process)
+    table = pa.Table.from_arrays(array, schema=schema)
+    writer.write_table(table)
+    _clear_lists(lists_to_process)
 
 # Function to create a database and table
 def create_sqlite_database(conn: Connection, cursor: Cursor):
@@ -207,7 +274,7 @@ def create_sqlite_database(conn: Connection, cursor: Cursor):
 
 
 # Function to insert nodal reactions into the database
-def sql_insert_nodal_reactions(conn: Connection, cursor: Cursor, uID, primary_combo_count: ctypes.c_int,
+def sql_insert_nodal_reactions(conn: Connection, cursor: Cursor, uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
                                secondary_combo_count: ctypes.c_int):
 
     nodal_reactions = []
@@ -233,7 +300,8 @@ def sql_insert_nodal_reactions(conn: Connection, cursor: Cursor, uID, primary_co
 
 
 # Function to insert nodal displacements into the database
-def sql_insert_nodal_displacements(conn: Connection, cursor: Cursor, uID, primary_combo_count, secondary_combo_count):
+def sql_insert_nodal_displacements(conn: Connection, cursor: Cursor, uID: ctypes.c_int,
+                                   primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int):
 
     insertion_query = """
         INSERT INTO NodalDisplacements (ResultId, NodeNumber, ResultCase, ResultCaseName, DisplacementX, DisplacementY, DisplacementZ, RotationXX, RotationYY, RotationZZ)
@@ -257,7 +325,7 @@ def sql_insert_nodal_displacements(conn: Connection, cursor: Cursor, uID, primar
 
 
 # Function to insert nodal coordinates into the database
-def sql_insert_nodal_coordinates(conn: Connection, cursor: Cursor, uID):
+def sql_insert_nodal_coordinates(conn: Connection, cursor: Cursor, uID: ctypes.c_int):
 
     nodal_coordinates = []
 
@@ -281,7 +349,7 @@ def sql_insert_nodal_coordinates(conn: Connection, cursor: Cursor, uID):
 
 
 # Function to insert element properties into the database
-def sql_insert_beam_properties(conn: Connection, cursor: Cursor, uID):
+def sql_insert_beam_properties(conn: Connection, cursor: Cursor, uID: ctypes.c_int):
 
     beam_properties = []
 
@@ -306,7 +374,8 @@ def sql_insert_beam_properties(conn: Connection, cursor: Cursor, uID):
 
 
 # Function to insert element forces into the database
-def sql_insert_beam_forces(conn: Connection, cursor: Cursor, uID, primary_combo_count, secondary_combo_count):
+def sql_insert_beam_forces(conn: Connection, cursor: Cursor, uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
+                           secondary_combo_count: ctypes.c_int):
     beam_results = []
 
     insertion_query = """INSERT INTO BeamForces (ResultId, BeamNumber, ResultCase, ResultCaseName, Position, Fx, Fy, Fz, Mx, My, Mz)
@@ -341,7 +410,7 @@ def sql_insert_beam_displacements(conn: Connection, cursor: Cursor, beam_results
     conn.commit()
 
 
-def parquet_insert_nodal_coordinates(uID, directory: pathlib.Path):
+def parquet_insert_nodal_coordinates(uID: ctypes.c_int, directory: pathlib.Path):
 
     node_numbers = []
     x_coords = []
@@ -362,21 +431,15 @@ def parquet_insert_nodal_coordinates(uID, directory: pathlib.Path):
             counter += 1
 
             if counter % 50_000 == 0:
-                array = list(pa.array(data) for data in lists_to_process)
-                table = pa.Table.from_arrays(array, schema=SCHEMAS["NodalCoordinates"])
-                writer.write_table(table)
-                _clear_lists(lists_to_process)
+                _create_parq_table(writer, lists_to_process, SCHEMAS["NodalCoordinates"])
 
-        array = list(pa.array(data) for data in lists_to_process)
-        table = pa.Table.from_arrays(array, schema=SCHEMAS["NodalCoordinates"])
-        writer.write_table(table)
-        _clear_lists(lists_to_process)
+        _create_parq_table(writer, lists_to_process, SCHEMAS["NodalCoordinates"])
 
     print("Nodal coordinates written to DB.")
 
 
-def parquet_insert_nodal_reactions(uID, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int,
-                                   directory: pathlib.Path):
+def parquet_insert_nodal_reactions(uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
+                                   secondary_combo_count: ctypes.c_int, directory: pathlib.Path):
 
     result_ids = []
     node_numbers = []
@@ -411,21 +474,15 @@ def parquet_insert_nodal_reactions(uID, primary_combo_count: ctypes.c_int, secon
             counter += 1
 
             if counter % 50_000 == 0:
-                array = list(pa.array(data) for data in lists_to_process)
-                table = pa.Table.from_arrays(array, schema=SCHEMAS["NodalReactions"])
-                writer.write_table(table)
-                _clear_lists(lists_to_process)
+                _create_parq_table(writer, lists_to_process, SCHEMAS["NodalReactions"])
 
-        array = list(pa.array(data) for data in lists_to_process)
-        table = pa.Table.from_arrays(array, schema=SCHEMAS["NodalReactions"])
-        writer.write_table(table)
-        _clear_lists(lists_to_process)
+        _create_parq_table(writer, lists_to_process, SCHEMAS["NodalReactions"])
 
         print("Nodal reactions written to DB.")
 
 
-def parquet_insert_nodal_displacements(uID, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int,
-                                       directory: pathlib.Path):
+def parquet_insert_nodal_displacements(uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
+                                       secondary_combo_count: ctypes.c_int, directory: pathlib.Path):
 
     result_ids = []
     node_numbers = []
@@ -460,20 +517,14 @@ def parquet_insert_nodal_displacements(uID, primary_combo_count: ctypes.c_int, s
             count += 1
 
             if count % 50_000 == 0:
-                array = list(pa.array(data) for data in lists_to_process)
-                table = pa.Table.from_arrays(array, schema=SCHEMAS["NodalDisplacements"])
-                writer.write_table(table)
-                _clear_lists(lists_to_process)
+                _create_parq_table(writer, lists_to_process, SCHEMAS["NodalDisplacements"])
 
-        array = list(pa.array(data) for data in lists_to_process)
-        table = pa.Table.from_arrays(array, schema=SCHEMAS["NodalDisplacements"])
-        writer.write_table(table)
-        _clear_lists(lists_to_process)
+        _create_parq_table(writer, lists_to_process, SCHEMAS["NodalDisplacements"])
 
     print("Nodal displacements written to DB.")
 
 
-def parquet_insert_beam_properties(uID, directory: pathlib.Path):
+def parquet_insert_beam_properties(uID: ctypes.c_int, directory: pathlib.Path):
     """
     Function for creating the parquet cruciform_output_file for beam properties.
     :param uID:
@@ -524,24 +575,17 @@ def parquet_insert_beam_properties(uID, directory: pathlib.Path):
             dir3_zs.append(r[15])
             counter += 1
             if counter % 50_000 == 0:
-                array = list(pa.array(data) for data in lists_to_process)
-                table = pa.Table.from_arrays(array, schema=SCHEMAS["BeamProperties"])
-                writer.write_table(table)
-                _clear_lists(lists_to_process)
+                _create_parq_table(writer, lists_to_process, SCHEMAS["BeamProperties"])
 
         # We write one last time for any remaining data in the lists
-        array = list(pa.array(data) for data in lists_to_process)
-        table = pa.Table.from_arrays(array, schema=SCHEMAS["BeamProperties"])
-        writer.write_table(table)
-        _clear_lists(lists_to_process)
+        _create_parq_table(writer, lists_to_process, SCHEMAS["BeamProperties"])
 
     print("Beam attributes and properties written to DB.")
 
 
-def parquet_insert_beam_forces(uID, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int,
-                               directory: pathlib.Path):
+def parquet_insert_beam_forces(uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
+                               secondary_combo_count: ctypes.c_int, directory: pathlib.Path):
     """
-
     """
 
     result_ids = []
@@ -576,19 +620,118 @@ def parquet_insert_beam_forces(uID, primary_combo_count: ctypes.c_int, secondary
             mzs.append(r[10])
             counter += 1
             if counter % 50_000 == 0:
-                array = list(pa.array(data) for data in lists_to_process)
-                table = pa.Table.from_arrays(array, schema=SCHEMAS["BeamForces"])
-                writer.write_table(table)
-                _clear_lists(lists_to_process)
+                _create_parq_table(writer, lists_to_process, SCHEMAS["BeamForces"])
 
         # We write one last time for any remaining data in the lists
-        array = list(pa.array(data) for data in
-                     (result_ids, beam_numbers, case_numbers, case_names, position_results, fxs, fys, fzs, mxs, mys, mzs))
-        table = pa.Table.from_arrays(array, schema=SCHEMAS["BeamForces"])
-        writer.write_table(table)
-        _clear_lists(lists_to_process)
+        _create_parq_table(writer, lists_to_process, SCHEMAS["BeamForces"])
 
     print("Beam force results written to DB.")
+
+
+def parquet_insert_plate_properties(uID: ctypes.c_int, directory: pathlib.Path):
+
+    plate_numbers = []
+    n1s = []
+    n2s = []
+    n3s = []
+    n4s = []
+    areas = []
+    property_names = []
+    property_types = []
+    element_types = []
+    group_names = []
+    plate_id_numbers = []
+
+    lists_to_process = (plate_numbers, property_names, property_types, element_types, group_names, plate_id_numbers,
+                        areas, n1s, n2s, n3s, n4s)
+
+    with pq.ParquetWriter(directory / "plate_properties.parquet", SCHEMAS["PlateProperties"]) as writer:
+
+        counter = 0
+
+        for r in extract_plate_properties(uID):
+            plate_numbers.append(r[0])
+            n1s.append(r[1])
+            n2s.append(r[2])
+            n3s.append(r[3])
+            n4s.append(r[4])
+            if r[4] != 0:
+                element_types.append("QUAD")
+            else:
+                element_types.append("TRI")
+            areas.append(r[5])
+            property_names.append(r[6])
+            property_types.append(r[7])
+            group_names.append(r[8])
+            plate_id_numbers.append(r[9])
+
+            counter += 1
+            if counter % 50_000 == 0:
+                _create_parq_table(writer, lists_to_process, SCHEMAS["PlateProperties"])
+
+        _create_parq_table(writer, lists_to_process, SCHEMAS["PlateProperties"])
+
+    print("Plate attributes and properties written to DB.")
+
+
+def parquet_insert_plate_loading(uID: ctypes.c_int, load_case_count: ctypes.c_int, directory: pathlib.Path):
+
+    plate_numbers = []
+    case_numbers = []
+    case_names = []
+    norm_neg_pressures = []
+    norm_pos_pressures = []
+    glob_neg_x_pressures = []
+    glob_neg_y_pressures = []
+    glob_neg_z_pressures = []
+    glob_pos_x_pressures = []
+    glob_pos_y_pressures = []
+    glob_pos_z_pressures = []
+    shear_stress_xs = []
+    shear_stress_ys = []
+
+    lists_to_process = (plate_numbers, case_numbers, case_names,
+                        norm_neg_pressures, norm_pos_pressures,
+                        glob_neg_x_pressures, glob_neg_y_pressures, glob_neg_z_pressures,
+                        glob_pos_x_pressures, glob_pos_y_pressures, glob_pos_z_pressures,
+                        shear_stress_xs, shear_stress_ys)
+
+    with pq.ParquetWriter(directory / "plate_loading.parquet", SCHEMAS["PlateLoading"]) as writer:
+
+        counter = 0
+
+        for r in extract_plate_loading(uID, load_case_count):
+            plate_numbers.append(r[0])
+            case_numbers.append(r[1])
+            case_names.append(r[2])
+            norm_neg_pressures.append(r[3])
+            norm_pos_pressures.append(r[4])
+            glob_neg_x_pressures.append(r[5])
+            glob_neg_y_pressures.append(r[6])
+            glob_neg_z_pressures.append(r[7])
+            glob_pos_x_pressures.append(r[8])
+            glob_pos_y_pressures.append(r[9])
+            glob_pos_z_pressures.append(r[10])
+            shear_stress_xs.append(r[11])
+            shear_stress_ys.append(r[12])
+
+            counter += 1
+            if counter % 50_000 == 0:
+                _create_parq_table(writer, lists_to_process, SCHEMAS["PlateLoading"])
+
+        _create_parq_table(writer, lists_to_process, SCHEMAS["PlateLoading"])
+
+    print("Plate loading written to DB.")
+
+
+def parquet_insert_plate_local_stresses(uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
+                                        secondary_combo_count: ctypes.c_int, directory: pathlib.Path):
+    pass
+
+
+def parquet_insert_plate_combined_stresses(uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
+                                           secondary_combo_count: ctypes.c_int, directory: pathlib.Path):
+    pass
 
 
 # Initialize Strand7 model
@@ -614,7 +757,7 @@ def initialize_model(model_file: str, result_file: str, scratch_path: str):
 
 
 # Function to extract nodal reactions
-def extract_nodal_reactions(uID, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int):
+def extract_nodal_reactions(uID: ctypes.c_int, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int):
 
     nNodes = ctypes.c_int(0)
     St7.St7GetTotal(uID, St7.tyNODE, ctypes.byref(nNodes))
@@ -623,10 +766,10 @@ def extract_nodal_reactions(uID, primary_combo_count: ctypes.c_int, secondary_co
     St7.St7GetNumLoadCase(uID, ctypes.byref(nLoadCases))
 
     number_of_cases = primary_combo_count.value + secondary_combo_count.value
-    for result_case in range(1, number_of_cases + 1):
+    for case_number in range(1, number_of_cases + 1):
 
         case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
-        St7.St7GetResultCaseName(uID, result_case, case_name, St7.kMaxStrLen)
+        St7.St7GetResultCaseName(uID, case_number, case_name, St7.kMaxStrLen)
 
         case_name_string = str(case_name.value.decode())
         print(f"Extracting node reactions for load case {case_name_string}...")
@@ -636,8 +779,8 @@ def extract_nodal_reactions(uID, primary_combo_count: ctypes.c_int, secondary_co
             reaction_array = ctypes.c_double * 6
             reactions = reaction_array()
 
-            St7.St7GetNodeResult(uID, St7.rtNodeReact, node, result_case, reactions)
-            result_id = f"{node}-{result_case}"
+            St7.St7GetNodeResult(uID, St7.rtNodeReact, node, case_number, reactions)
+            result_id = f"{node}-{case_number}"
             fx = float(reactions[0])
             fy = float(reactions[1])
             fz = float(reactions[2])
@@ -645,7 +788,7 @@ def extract_nodal_reactions(uID, primary_combo_count: ctypes.c_int, secondary_co
             my = float(reactions[4])
             mz = float(reactions[5])
 
-            result = (result_id, node, result_case, case_name_string, fx, fy, fz, mx, my, mz)
+            result = (result_id, node, case_number, case_name_string, fx, fy, fz, mx, my, mz)
 
             yield result
 
@@ -653,7 +796,8 @@ def extract_nodal_reactions(uID, primary_combo_count: ctypes.c_int, secondary_co
 
 
 # Function to extract nodal displacements
-def extract_nodal_displacements(uID, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int):
+def extract_nodal_displacements(uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
+                                secondary_combo_count: ctypes.c_int):
 
     nNodes = ctypes.c_int(0)
     St7.St7GetTotal(uID, St7.tyNODE, ctypes.byref(nNodes))
@@ -662,10 +806,10 @@ def extract_nodal_displacements(uID, primary_combo_count: ctypes.c_int, secondar
     St7.St7GetNumLoadCase(uID, ctypes.byref(nLoadCases))
 
     number_of_cases = primary_combo_count.value + secondary_combo_count.value
-    for result_case in range(1, number_of_cases + 1):
+    for case_number in range(1, number_of_cases + 1):
 
         case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
-        St7.St7GetResultCaseName(uID, result_case, case_name, St7.kMaxStrLen)
+        St7.St7GetResultCaseName(uID, case_number, case_name, St7.kMaxStrLen)
         print(f"Extracting node displacements for load case {case_name.value.decode()}...")
 
         for node in range(1, nNodes.value + 1):
@@ -673,8 +817,8 @@ def extract_nodal_displacements(uID, primary_combo_count: ctypes.c_int, secondar
             displacement_array = ctypes.c_double * 6
             displacements = displacement_array()
 
-            St7.St7GetNodeResult(uID, St7.rtNodeDisp, node, result_case, displacements)
-            result_id = f"{node}-{result_case}"
+            St7.St7GetNodeResult(uID, St7.rtNodeDisp, node, case_number, displacements)
+            result_id = f"{node}-{case_number}"
             dx = displacements[0]
             dy = displacements[1]
             dz = displacements[2]
@@ -682,12 +826,12 @@ def extract_nodal_displacements(uID, primary_combo_count: ctypes.c_int, secondar
             dyy = displacements[4]
             dzz = displacements[5]
 
-            result = (result_id, node, result_case, case_name.value.decode(), dx, dy, dz, dxx, dyy, dzz)
+            result = (result_id, node, case_number, case_name.value.decode(), dx, dy, dz, dxx, dyy, dzz)
             yield result
 
 
 # Function to extract nodal coordinates
-def extract_nodal_coordinates(uID):
+def extract_nodal_coordinates(uID: ctypes.c_int):
 
     nNodes = ctypes.c_int(0)
     St7.St7GetTotal(uID, St7.tyNODE, ctypes.byref(nNodes))
@@ -710,7 +854,7 @@ def extract_nodal_coordinates(uID):
 
 
 # Function to extract beam attributes and properties
-def extract_beam_properties(uID):
+def extract_beam_properties(uID: ctypes.c_int):
 
     nBeams = ctypes.c_int(0)
     St7.St7GetTotal(uID, St7.tyBEAM, ctypes.byref(nBeams))
@@ -744,11 +888,13 @@ def extract_beam_properties(uID):
         # Access the beam axes data
         axis_data = ctypes.c_double * 9
         axis_array = axis_data()
+
         St7.St7GetBeamAxisSystemInitial(uID, beam, axis_array)
 
         # Access the beam geometric data
         element_data = ctypes.c_double * 3
         element_data_array = element_data()
+
         St7.St7GetElementData(uID, St7.tyBEAM, beam, 0, element_data_array)
 
         node1 = connections[1]
@@ -764,6 +910,8 @@ def extract_beam_properties(uID):
         dir3_y = axis_array[7]
         dir3_z = axis_array[8]
 
+        del axis_array, element_data_array
+
         result = (beam, node1, node2, length, property_name.value.decode(),
                   group_name.value.decode(), id_number.value, dir1_x, dir1_y, dir1_z,
                   dir2_x, dir2_y, dir2_z, dir3_x, dir3_y, dir3_z)
@@ -771,7 +919,7 @@ def extract_beam_properties(uID):
 
 
 # Function to extract the beam force results
-def extract_beam_forces(uID, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int):
+def extract_beam_forces(uID: ctypes.c_int, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int):
 
     nBeams = ctypes.c_int(0)
     St7.St7GetTotal(uID, St7.tyBEAM, ctypes.byref(nBeams))
@@ -830,13 +978,10 @@ def extract_beam_forces(uID, primary_combo_count: ctypes.c_int, secondary_combo_
 
 
 # Function to extract the beam displacement results
-def extract_beam_displacements(conn: Connection, cursor: Cursor, uID, primary_combo_count: ctypes.c_int,
+def extract_beam_displacements(conn: Connection, cursor: Cursor, uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
                                secondary_combo_count: ctypes.c_int):
     nBeams = ctypes.c_int(0)
     St7.St7GetTotal(uID, St7.tyBEAM, ctypes.byref(nBeams))
-
-    nLoadCases = ctypes.c_int(0)
-    St7.St7GetNumLoadCase(uID, ctypes.byref(nLoadCases))
 
     # The following ensures that the result positions are output as a ratio of the overall member length (0.0...1.0)
     St7.St7SetBeamResultPosMode(uID, St7.bpParam)
@@ -847,10 +992,10 @@ def extract_beam_displacements(conn: Connection, cursor: Cursor, uID, primary_co
     # every result case, which should enhance performance
     beam_results = []
     number_of_cases = primary_combo_count.value + secondary_combo_count.value
-    for result_case in range(1, number_of_cases + 1):
+    for case_number in range(1, number_of_cases + 1):
 
         case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
-        St7.St7GetResultCaseName(uID, result_case, case_name, St7.kMaxStrLen)
+        St7.St7GetResultCaseName(uID, case_number, case_name, St7.kMaxStrLen)
         print(f"Extracting beam displacements for result case {case_name.value.decode()}...")
 
         for beam in range(1, nBeams.value + 1):
@@ -868,39 +1013,163 @@ def extract_beam_displacements(conn: Connection, cursor: Cursor, uID, primary_co
             positions = pos_array(*position_values_c)
 
             # Get the beam results using the Strand API
-            St7.St7GetBeamResultArrayPos(uID, St7.rtBeamDisp, St7.stBeamPrincipal, beam, result_case,
+            St7.St7GetBeamResultArrayPos(uID, St7.rtBeamDisp, St7.stBeamPrincipal, beam, case_number,
                                          num_stations_requested, positions, ctypes.byref(number_columns), displacements)
 
             # Access the forces from each beam at each station position, and add these to the result list
             for i in range(num_stations_requested):
-                position = f"{position_values[i]:.2f}"
+                position = position_values[i]
                 dx = displacements[(i * 6) + 0]
                 dy = displacements[(i * 6) + 1]
                 dz = displacements[(i * 6) + 2]
                 rx = displacements[(i * 6) + 3]
                 ry = displacements[(i * 6) + 4]
                 rz = displacements[(i * 6) + 5]
-                sid = f"{beam}-{result_case}-{position}"
-                result = (sid, beam, result_case, case_name.value.decode(), float(position), dx, dy, dz, rx, ry, rz)
+                sid = f"{beam}-{case_number}-{position:.2f}"
+                result = (sid, beam, case_number, case_name.value.decode(), position, dx, dy, dz, rx, ry, rz)
                 beam_results.append(result)
 
-        # Insert the beam dispalcement results into the database
+        # Insert the beam displacement results into the database
         if len(beam_results) == 0:
             print("Warning: Beam displacement result set is empty.")
         else:
             # Implementing smarter batching
-            if result_case % 100 == 0 or result_case == number_of_cases:
+            if case_number % 100 == 0 or case_number == number_of_cases:
                 sql_insert_beam_displacements(conn, cursor, beam_results)
                 beam_results.clear()
 
-    print("Beam displacement results written to DB.")
+# Function to extract the plate attributes and properties
+def extract_plate_properties(uID: ctypes.c_int):
+
+    nPlates = ctypes.c_int(0)
+    St7.St7GetTotal(uID, St7.tyPLATE, ctypes.byref(nPlates))
+
+    print("Extracting plate attributes and properties...")
+
+    for plate in range(1, nPlates.value + 1):
+
+        # Create an array to store the connection information
+        connection_array = ctypes.c_int * St7.kMaxElementNode
+        connections = connection_array()
+
+        # Access the beam connection information
+        St7.St7GetElementConnection(uID, St7.tyPLATE, plate, connections)
+
+        # Access the plate id information
+        id_number = ctypes.c_int(0)
+        St7.St7GetPlateID(uID, plate, id_number)
+
+        # Access the property associated with the plate
+        property_number = ctypes.c_int(0)
+        property_name = ctypes.create_string_buffer(St7.kMaxStrLen)
+        property_type = ctypes.c_int(0)
+        material_type = ctypes.c_int(0)
+        St7.St7GetElementProperty(uID, St7.ptPLATEPROP, plate, ctypes.byref(property_number))
+        St7.St7GetPropertyName(uID, St7.ptPLATEPROP, property_number, property_name, St7.kMaxStrLen)
+        St7.St7GetPlatePropertyType(uID, property_number, ctypes.byref(property_type), ctypes.byref(material_type))
+
+        # Access the group associated with the plate
+        group_id = ctypes.c_int(0)
+        group_name = ctypes.create_string_buffer(St7.kMaxStrLen)
+        St7.St7GetEntityGroup(uID, St7.tyPLATE, plate, ctypes.byref(group_id))
+        St7.St7GetGroupIDName(uID, group_id, group_name, St7.kMaxStrLen)
+
+        # Access the plate geometric data
+        element_data = ctypes.c_double * 1
+        element_data_array = element_data()
+
+        St7.St7GetElementData(uID, St7.tyPLATE, plate, 0, element_data_array)
+
+        node_count = connections[0]
+        n1 = connections[1]
+        n2 = connections[2]
+        n3 = connections[3]
+
+        if node_count == 3:
+            n4 = 0
+        else:
+            n4 = connections[4]
+
+        area = element_data_array[0]
+
+        del element_data_array, connections
+
+        result = (plate, n1, n2, n3, n4, area, property_name.value.decode(), property_type.value,
+                  group_name.value.decode(), id_number.value)
+
+        yield result
+
+
+# Function to extract the plate loading from the model
+def extract_plate_loading(uID: ctypes.c_int, load_case_count: ctypes.c_int):
+
+    nPlates = ctypes.c_int(0)
+    St7.St7GetTotal(uID, St7.tyPLATE, ctypes.byref(nPlates))
+    print("Extracting plate loads...")
+
+    for plate in range(1, nPlates.value + 1):
+        for case_number in range(1, load_case_count.value + 1):
+
+            case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
+            St7.St7GetLoadCaseName(uID, case_number, ctypes.byref(case_name), kMaxStrLen)  # Not sure if this is OK
+
+            # Get the plate normal loading
+            norm_pressure_array = ctypes.c_double * 2
+            norm_pressures = norm_pressure_array()
+            St7.St7GetPlateNormalPressure2(uID, plate, case_number, ctypes.byref(norm_pressures))
+            norm_neg_pressure = norm_pressures[0]
+            norm_pos_pressure = norm_pressure_array[1]
+
+            # Get the plate global loading
+            glob_pressure_array = ctypes.c_double * 3
+            glob_pos_pressures = glob_pressure_array()
+            glob_neg_pressures = glob_pressure_array()
+            St7.St7GetPlateGlobalPressure3S(uID, plate, St7.psPlateMinusZ, case_number, St7.ppNone, ctypes.byref(glob_neg_pressures))
+            St7.St7GetPlateGlobalPressure3S(uID, plate, St7.psPlatePlusZ, case_number, St7.ppNone, ctypes.byref(glob_pos_pressures))
+            glob_neg_x_pressure = glob_neg_pressures[0]
+            glob_neg_y_pressure = glob_neg_pressures[1]
+            glob_neg_z_pressure = glob_neg_pressures[2]
+            glob_pos_x_pressure = glob_pos_pressures[0]
+            glob_pos_y_pressure = glob_pos_pressures[1]
+            glob_pos_z_pressure = glob_pos_pressures[2]
+
+            # Get the plate shear loading
+            shear_stress_array = ctypes.c_double * 2
+            shear_stresses = shear_stress_array()
+            St7.St7GetPlateShear2(uID, plate, case_number, ctypes.byref(shear_stresses))
+            shear_stress_x = shear_stresses[0]
+            shear_stress_y = shear_stresses[1]
+
+            result = (plate, case_number, case_name.value.decode(),
+                      norm_neg_pressure, norm_pos_pressure,
+                      glob_neg_x_pressure, glob_neg_y_pressure, glob_neg_z_pressure,
+                      glob_pos_x_pressure, glob_pos_y_pressure, glob_pos_z_pressure,
+                      shear_stress_x, shear_stress_y)
+
+            yield result
+
+# Function to extract the plate local stress results
+def extract_plate_local_stresses(uID: ctypes.c_int, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int):
+    pass
+
+# Function to extract the plate combined stress results
+def extract_plate_combined_stresses(uID: ctypes.c_int, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int):
+    pass
 
 
 # Main function for extracting results
-def extract_model_data(model_file: str, result_file: str, db_fp: str, scratch_path: str, parquet=False, directory=None):
+def extract_model_data(model_file: str, result_file: str, scratch_path: str, parquet=False, directory=None,
+                       db_fp: str = None):
 
     # Initialize the Strand7 model
-    uID, primary_combo_count, secondary_combo_count = initialize_model(model_file, result_file, scratch_path)
+    init = initialize_model(model_file, result_file, scratch_path)
+    if not init:
+        raise RuntimeError("Failed to initialize Strand7 model and results.")
+    uID, primary_combo_count, secondary_combo_count = init
+
+    # Get the number of load cases
+    load_case_count = ctypes.c_int(0)
+    St7.St7GetNumLoadCase(uID, ctypes.byref(load_case_count))
 
     # Logic for creating the parquet files
     if parquet:
@@ -909,10 +1178,16 @@ def extract_model_data(model_file: str, result_file: str, db_fp: str, scratch_pa
         parquet_insert_nodal_displacements(uID, primary_combo_count, secondary_combo_count, directory)
         parquet_insert_beam_forces(uID, primary_combo_count, secondary_combo_count, directory)
         parquet_insert_beam_properties(uID, directory)
+        # parquet_insert_plate_properties(uID, directory)
+        # parquet_insert_plate_loading(uID, load_case_count, directory)
 
     # If not running the parquet extraction, the program will extract to a SQLite db
     else:
         with connect(db_fp) as conn:
+
+            conn.execute("PRAGMA journal_mode = WAL;")
+            conn.execute("PRAGMA synchronous = NORMAL;")
+            conn.execute("PRAGMA temp_store = MEMORY;")
 
             cursor = conn.cursor()
 
@@ -924,21 +1199,19 @@ def extract_model_data(model_file: str, result_file: str, db_fp: str, scratch_pa
 
             else:
 
+                # Extract nodal coordinates and store them in the database
+                sql_insert_nodal_coordinates(conn, cursor, uID)
+
                 # Extract nodal reactions and store them in the database
-                extract_nodal_reactions(conn, cursor, uID, primary_combo_count, secondary_combo_count)
+                sql_insert_nodal_reactions(conn, cursor, uID, primary_combo_count, secondary_combo_count)
 
                 # Extract nodal displacements and store them in the database
-                extract_nodal_displacements(conn, cursor, uID, primary_combo_count, secondary_combo_count)
-
-                # Extract nodal coordinates and store them in the database
-                extract_nodal_coordinates(conn, cursor, uID)
+                sql_insert_nodal_displacements(conn, cursor, uID, primary_combo_count, secondary_combo_count)
 
                 # Extract the beam properties and store them in the database
                 sql_insert_beam_properties(conn, cursor, uID)
 
                 # Extract beam forces and store them in the database
-                # Let's change the below logic to use a generator pattern instead
-                # This should be efficient
                 sql_insert_beam_forces(conn, cursor, uID, primary_combo_count, secondary_combo_count)
 
                 # Extract beam displacements and store them in the database
@@ -958,13 +1231,11 @@ if __name__ == '__main__':
     # 2. The model must be closed when running the script (can't be open in
     # the background as the script will access it using the API).
     # 3. If you have accidentally run the script while the model is open,
-    # make sure to delete the empty database cruciform_output_file that it created before
-    # rerunning the script.
+    # make sure to delete the empty database output_file that it created
+    # before rerunning the script.
     # ----------------------------------------------------------------------
 
     # Do you want it to extract in parquet format?
-    parquet = True
-    directory = pathlib.Path(r"C:\Users\Josh.Finnin\OneDrive - Arup\Desktop\ALS Versioning Factors\V1_4_4_ALS_Base_Parquet")
 
     # Create scratch path if not exists
     scratch_folder = f"C:\\Users\\{getuser()}\\Documents\\Changi T5_Database_Scratch"
@@ -973,103 +1244,111 @@ if __name__ == '__main__':
 
     root = tk.Tk()
     root.withdraw()
-    model_file = filedialog.askopenfilename(title="Select your Strand7 model file.")
-    result_file = filedialog.askopenfilename(title="Select your Strand7 results file.")
 
-    # Provide the path for the output SQLite database cruciform_output_file
-    result_name = os.path.splitext(os.path.split(result_file)[1])[0]
-    db_fp = filedialog.asksaveasfilename(title="Save Database File As", defaultextension=".db")
+    # Collect the input file paths
+    model_file = filedialog.askopenfilename(title="Select your Strand7 model file")
+    result_file = filedialog.askopenfilename(title="Select your Strand7 results file")
 
-    extract_model_data(model_file, result_file, db_fp, scratch_path=scratch_folder, parquet=parquet, directory=directory)
+    # Determine the output database format and collect corresponding inputs
+    parquet_output = messagebox.askyesno("Output Format", "Do you want parquet file outputs (will default to SQLite otherwise)?")
+    if parquet_output:
+        directory = pathlib.Path(filedialog.askdirectory(title="Select the directory for your parquet files"))
+        db_fp = None
+    else:
+        db_fp = filedialog.asksaveasfilename(title="Save database file as", defaultextension=".db")
+        directory = None
 
-#     nla_dict = {
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\40 ALS Removal S-TR04-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\40 ALS Removal S-TR04-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\40 ALS Removal S-TR04-01_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\41 ALS Removal S-TR11-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\41 ALS Removal S-TR11-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\41 ALS Removal S-TR11-01_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\42 ALS Removal S-TR13-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\42 ALS Removal S-TR13-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\42 ALS Removal S-TR13-01_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\43 ALS Removal S-TR13-02.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\43 ALS Removal S-TR13-02.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\43 ALS Removal S-TR13-02_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\44 ALS Removal S-TR13-03.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\44 ALS Removal S-TR13-03.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\44 ALS Removal S-TR13-03_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\45 ALS Removal S-TR13-04.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\45 ALS Removal S-TR13-04.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\45 ALS Removal S-TR13-04_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\46 ALS Removal S-TR14-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\46 ALS Removal S-TR14-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\46 ALS Removal S-TR14-01_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\47 ALS Removal S-TR14-02.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\47 ALS Removal S-TR14-02.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\47 ALS Removal S-TR14-02_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\48 ALS Removal S-TR14-03.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\48 ALS Removal S-TR14-03.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\48 ALS Removal S-TR14-03_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\49 ALS Removal S-TR14-04.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\49 ALS Removal S-TR14-04.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\49 ALS Removal S-TR14-04_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\50 ALS Removal S-TR01-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\50 ALS Removal S-TR01-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\50 ALS Removal S-TR01-01_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\51 ALS Removal S-TR01-02.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\51 ALS Removal S-TR01-02.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\51 ALS Removal S-TR01-02_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\52 ALS Removal S-TR01a-05.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\52 ALS Removal S-TR01a-05.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\52 ALS Removal S-TR01a-05_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\53 ALS Removal S-TR01b-05.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\53 ALS Removal S-TR01b-05.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\53 ALS Removal S-TR01b-05_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\54 ALS Removal S-TR02-03.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\54 ALS Removal S-TR02-03.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\54 ALS Removal S-TR02-03_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\55 ALS Removal S-TR02a-05.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\55 ALS Removal S-TR02a-05.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\55 ALS Removal S-TR02a-05_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\56 ALS Removal S-TR02b-05.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\56 ALS Removal S-TR02b-05.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\56 ALS Removal S-TR02b-05_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\57 ALS Removal S-TR04-02.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\57 ALS Removal S-TR04-02.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\57 ALS Removal S-TR04-02_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\58 ALS Removal S-TR05-03.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\58 ALS Removal S-TR05-03.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\58 ALS Removal S-TR05-03_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\59 ALS Removal S-TR06-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\59 ALS Removal S-TR06-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\59 ALS Removal S-TR06-01_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\60 ALS Removal S-TR06-02.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\60 ALS Removal S-TR06-02.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\60 ALS Removal S-TR06-02_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\61 ALS Removal S-TR06-03.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\61 ALS Removal S-TR06-03.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\61 ALS Removal S-TR06-03_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\62 ALS Removal S-TR07-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\62 ALS Removal S-TR07-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\62 ALS Removal S-TR07-01_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\63 ALS Removal S-TR07-02.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\63 ALS Removal S-TR07-02.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\63 ALS Removal S-TR07-02_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\64 ALS Removal S-TR07-03.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\64 ALS Removal S-TR07-03.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\64 ALS Removal S-TR07-03_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\65 ALS Removal S-TR08-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\65 ALS Removal S-TR08-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\65 ALS Removal S-TR08-01_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\66 ALS Removal S-TR11-02.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\66 ALS Removal S-TR11-02.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\66 ALS Removal S-TR11-02_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\67 ALS Removal S-TR12-01.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\67 ALS Removal S-TR12-01.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\67 ALS Removal S-TR12-01_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\68 ALS Removal TR01a-04.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\68 ALS Removal TR01a-04.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\68 ALS Removal TR01a-04_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\69 ALS Removal TR01b-04.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\69 ALS Removal TR01b-04.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\69 ALS Removal TR01b-04_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\70 ALS Removal TR02a-04.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\70 ALS Removal TR02a-04.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\70 ALS Removal TR02a-04_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\71 ALS Removal TR02b-04.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\71 ALS Removal TR02b-04.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\71 ALS Removal TR02b-04_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\72 ALS Removal CHB1-T1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\72 ALS Removal CHB1-T1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\72 ALS Removal CHB1-T1_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\73 ALS Removal CHB1-T2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\73 ALS Removal CHB1-T2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\73 ALS Removal CHB1-T2_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\74 ALS Removal CHB1-T3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\74 ALS Removal CHB1-T3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\74 ALS Removal CHB1-T3_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\75 ALS Removal CHB1-T4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\75 ALS Removal CHB1-T4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\75 ALS Removal CHB1-T4_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\76 ALS Removal CHB1-B1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\76 ALS Removal CHB1-B1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\76 ALS Removal CHB1-B1_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\77 ALS Removal CHB1-B2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\77 ALS Removal CHB1-B2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\77 ALS Removal CHB1-B2_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\78 ALS Removal CHB1-B3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\78 ALS Removal CHB1-B3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\78 ALS Removal CHB1-B3_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\79 ALS Removal CHB1-B4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\79 ALS Removal CHB1-B4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\79 ALS Removal CHB1-B4_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\80 ALS Removal CHB1-D1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\80 ALS Removal CHB1-D1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\80 ALS Removal CHB1-D1_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\81 ALS Removal CHB1-D2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\81 ALS Removal CHB1-D2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\81 ALS Removal CHB1-D2_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\82 ALS Removal CHB1-D3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\82 ALS Removal CHB1-D3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\82 ALS Removal CHB1-D3_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\83 ALS Removal CHB1-D4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\83 ALS Removal CHB1-D4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\83 ALS Removal CHB1-D4_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\84 ALS Removal CHB2-T1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\84 ALS Removal CHB2-T1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\84 ALS Removal CHB2-T1_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\85 ALS Removal CHB2-T2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\85 ALS Removal CHB2-T2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\85 ALS Removal CHB2-T2_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\86 ALS Removal CHB2-T3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\86 ALS Removal CHB2-T3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\86 ALS Removal CHB2-T3_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\87 ALS Removal CHB2-T4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\87 ALS Removal CHB2-T4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\87 ALS Removal CHB2-T4_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\88 ALS Removal CHB2-B1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\88 ALS Removal CHB2-B1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\88 ALS Removal CHB2-B1_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\89 ALS Removal CHB2-B2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\89 ALS Removal CHB2-B2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\89 ALS Removal CHB2-B2_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\90 ALS Removal CHB2-B3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\90 ALS Removal CHB2-B3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\90 ALS Removal CHB2-B3_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\91 ALS Removal CHB2-B4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\91 ALS Removal CHB2-B4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\91 ALS Removal CHB2-B4_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\92 ALS Removal CHB2-D1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\92 ALS Removal CHB2-D1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\92 ALS Removal CHB2-D1_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\93 ALS Removal CHB2-D2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\93 ALS Removal CHB2-D2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\93 ALS Removal CHB2-D2_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\94 ALS Removal CHB2-D3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\94 ALS Removal CHB2-D3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\94 ALS Removal CHB2-D3_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\95 ALS Removal CHB2-D4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\95 ALS Removal CHB2-D4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\95 ALS Removal CHB2-D4_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\96 ALS Removal CHC2-T1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\96 ALS Removal CHC2-T1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\96 ALS Removal CHC2-T1_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\97 ALS Removal CHC2-T2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\97 ALS Removal CHC2-T2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\97 ALS Removal CHC2-T2_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\98 ALS Removal CHC2-T3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\98 ALS Removal CHC2-T3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\98 ALS Removal CHC2-T3_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\99 ALS Removal CHC2-T4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\99 ALS Removal CHC2-T4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\99 ALS Removal CHC2-T4_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\100 ALS Removal CHC2-B1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\100 ALS Removal CHC2-B1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\100 ALS Removal CHC2-B1_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\101 ALS Removal CHC2-B2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\101 ALS Removal CHC2-B2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\101 ALS Removal CHC2-B2_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\102 ALS Removal CHC2-B3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\102 ALS Removal CHC2-B3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\102 ALS Removal CHC2-B3_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\103 ALS Removal CHC2-B4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\103 ALS Removal CHC2-B4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\103 ALS Removal CHC2-B4_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\104 ALS Removal CHC2-D1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\104 ALS Removal CHC2-D1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\104 ALS Removal CHC2-D1_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\105 ALS Removal CHC2-D2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\105 ALS Removal CHC2-D2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\105 ALS Removal CHC2-D2_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\106 ALS Removal CHC2-D3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\106 ALS Removal CHC2-D3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\106 ALS Removal CHC2-D3_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\107 ALS Removal CHC2-D4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\107 ALS Removal CHC2-D4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\107 ALS Removal CHC2-D4_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\108 ALS Removal CHC1-T1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\108 ALS Removal CHC1-T1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\108 ALS Removal CHC1-T1_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\109 ALS Removal CHC1-T2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\109 ALS Removal CHC1-T2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\109 ALS Removal CHC1-T2_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\110 ALS Removal CHC1-T3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\110 ALS Removal CHC1-T3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\110 ALS Removal CHC1-T3_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\111 ALS Removal CHC1-T4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\111 ALS Removal CHC1-T4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\111 ALS Removal CHC1-T4_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\112 ALS Removal CHC1-B1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\112 ALS Removal CHC1-B1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\112 ALS Removal CHC1-B1_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\113 ALS Removal CHC1-B2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\113 ALS Removal CHC1-B2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\113 ALS Removal CHC1-B2_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\114 ALS Removal CHC1-B3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\114 ALS Removal CHC1-B3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\114 ALS Removal CHC1-B3_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\115 ALS Removal CHC1-B4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\115 ALS Removal CHC1-B4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\115 ALS Removal CHC1-B4_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\116 ALS Removal CHC1-D1.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\116 ALS Removal CHC1-D1.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\116 ALS Removal CHC1-D1_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\117 ALS Removal CHC1-D2.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\117 ALS Removal CHC1-D2.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\117 ALS Removal CHC1-D2_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\118 ALS Removal CHC1-D3.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\118 ALS Removal CHC1-D3.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\118 ALS Removal CHC1-D3_Parquet"),
-# r"D:\Projects\Changi T5\MUC\Strand7 Model Data\119 ALS Removal CHC1-D4.NLA": (r"D:\Projects\Changi T5\MUC\Strand7 Model Data\119 ALS Removal CHC1-D4.st7", r"D:\Projects\Changi T5\MUC\Strand7 Model Data\119 ALS Removal CHC1-D4_Parquet")}
-#
-#     p = "Something"
-#
-#     for k, v in nla_dict.items():
-#         if not os.path.exists(v[1]):
-#             os.mkdir(v[1])
-#         extract_model_data(v[0], k, p, scratch_path=scratch_folder, parquet=parquet, directory=pathlib.Path(v[1]))
-#         time.sleep(1)
+    extract_model_data(model_file, result_file, scratch_path=scratch_folder, parquet=parquet_output, directory=directory, db_fp=db_fp)
+
+    # nla_dict = {
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\36 ALS Removal S-TR02-01.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\36 ALS Removal S-TR02-01.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\36 ALS Removal S-TR02-01"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\37 ALS Removal S-TR02-02.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\37 ALS Removal S-TR02-02.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\37 ALS Removal S-TR02-02"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\38 ALS Removal S-TR05-01.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\38 ALS Removal S-TR05-01.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\38 ALS Removal S-TR05-01"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\39 ALS Removal S-TR05-02.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\39 ALS Removal S-TR05-02.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\39 ALS Removal S-TR05-02"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\40 ALS Removal S-TR04-01.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\40 ALS Removal S-TR04-01.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\40 ALS Removal S-TR04-01"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\41 ALS Removal S-TR11-01.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\41 ALS Removal S-TR11-01.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\41 ALS Removal S-TR11-01"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\42 ALS Removal S-TR13-01.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\42 ALS Removal S-TR13-01.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\42 ALS Removal S-TR13-01"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\43 ALS Removal S-TR13-02.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\43 ALS Removal S-TR13-02.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\43 ALS Removal S-TR13-02"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\44 ALS Removal S-TR13-03.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\44 ALS Removal S-TR13-03.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\44 ALS Removal S-TR13-03"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\45 ALS Removal S-TR13-04.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\45 ALS Removal S-TR13-04.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\45 ALS Removal S-TR13-04"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\46 ALS Removal S-TR14-01.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\46 ALS Removal S-TR14-01.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\46 ALS Removal S-TR14-01"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\47 ALS Removal S-TR14-02.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\47 ALS Removal S-TR14-02.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\47 ALS Removal S-TR14-02"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\48 ALS Removal S-TR14-03.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\48 ALS Removal S-TR14-03.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\48 ALS Removal S-TR14-03"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\49 ALS Removal S-TR14-04.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\49 ALS Removal S-TR14-04.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\49 ALS Removal S-TR14-04"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\50 ALS Removal S-TR01-01.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\50 ALS Removal S-TR01-01.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\50 ALS Removal S-TR01-01"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\51 ALS Removal S-TR01-02.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\51 ALS Removal S-TR01-02.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\51 ALS Removal S-TR01-02"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\54 ALS Removal S-TR02-03.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\54 ALS Removal S-TR02-03.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\54 ALS Removal S-TR02-03"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\58 ALS Removal S-TR05-03.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\58 ALS Removal S-TR05-03.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\58 ALS Removal S-TR05-03"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\59 ALS Removal S-TR06-01.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\59 ALS Removal S-TR06-01.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\59 ALS Removal S-TR06-01"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\60 ALS Removal S-TR06-02.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\60 ALS Removal S-TR06-02.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\60 ALS Removal S-TR06-02"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\61 ALS Removal S-TR06-03.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\61 ALS Removal S-TR06-03.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\61 ALS Removal S-TR06-03"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\62 ALS Removal S-TR07-01.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\62 ALS Removal S-TR07-01.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\62 ALS Removal S-TR07-01"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\63 ALS Removal S-TR07-02.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\63 ALS Removal S-TR07-02.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\63 ALS Removal S-TR07-02"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\64 ALS Removal S-TR07-03.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\64 ALS Removal S-TR07-03.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\64 ALS Removal S-TR07-03"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\65 ALS Removal S-TR08-01.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\65 ALS Removal S-TR08-01.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\65 ALS Removal S-TR08-01"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\66 ALS Removal S-TR11-02.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\66 ALS Removal S-TR11-02.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\66 ALS Removal S-TR11-02"),
+    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\67 ALS Removal S-TR12-01.NLA": (
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\67 ALS Removal S-TR12-01.st7",
+    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\67 ALS Removal S-TR12-01")}
+    #
+    # p = "Something"
+    #
+    # for k, v in nla_dict.items():
+    #     if not os.path.exists(v[1]):
+    #         os.mkdir(v[1])
+    #     extract_model_data(v[0], k, p, scratch_path=scratch_folder, parquet=parquet, directory=pathlib.Path(v[1]))
+    #     time.sleep(1)
 
 
