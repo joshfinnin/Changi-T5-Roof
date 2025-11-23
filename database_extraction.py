@@ -5,7 +5,7 @@ database_extractor.py
 Module to extract the analysis results from a Strand7 model into a SQLite database or Parquet files.
 """
 
-__version__ = "1.2.0"
+__version__ = "1.2.2"
 
 import ctypes
 from sqlite3 import Connection, Cursor, connect
@@ -154,8 +154,9 @@ SCHEMAS = {"BeamForces": _BEAM_FORCE_SCHEMA,
 
 
 def _log_error_message(err_code: int):
-    message = St7.St7GetAPIErrorString(err_code, St7.kMaxStrLen).value.decode()
-    print(message)
+    message = ctypes.create_string_buffer(kMaxStrLen)
+    St7.St7GetAPIErrorString(err_code, message, St7.kMaxStrLen)
+    print(message.value.decode())
 
 def _clear_lists(lists_to_clear: tuple):
     """Convenience function for clearing lists."""
@@ -737,23 +738,28 @@ def parquet_insert_plate_combined_stresses(uID: ctypes.c_int, primary_combo_coun
 # Initialize Strand7 model
 def initialize_model(model_file: str, result_file: str, scratch_path: str):
     uID = ctypes.c_int(1)  # Unique identifier for the model
-    St7.St7Init()
+    _log_error_message(St7.St7Init())
     p_combo_count = ctypes.c_int(0)
     s_combo_count = ctypes.c_int(0)
     try:  # This try block is essential for avoiding getting stuck if the API call fails
-        St7.St7OpenFile(uID, model_file.encode('utf-8'), scratch_path.encode())
+        _log_error_message(St7.St7OpenFile(uID, model_file.encode('utf-8'), scratch_path.encode('utf-8')))
         print("Model opened.")
-        St7.St7OpenResultFile(uID, result_file.encode(), None, St7.kUseExistingCombinations,
-                              ctypes.byref(p_combo_count), ctypes.byref(s_combo_count))
+        _log_error_message(St7.St7OpenResultFile(uID, result_file.encode('utf-8'), None, St7.kUseExistingCombinations,
+                              ctypes.byref(p_combo_count), ctypes.byref(s_combo_count)))
         print("Results accessed.")
         print(f"Primary combinations found: {p_combo_count.value}")
         print(f"Secondary combinations found: {s_combo_count.value}")
 
         return uID, p_combo_count, s_combo_count
 
-    except:
+    except ValueError as ve:
+        raise ValueError(f"A value error occurred. Likely to be caused by the file names used.") from ve
+
+    except Exception as e:
+        raise RuntimeError("Failed to initialize Strand7 model and results.") from e
+
+    finally:
         St7.St7Release()
-        return None
 
 
 # Function to extract nodal reactions
@@ -919,7 +925,7 @@ def extract_beam_properties(uID: ctypes.c_int):
 
 
 # Function to extract the beam force results
-def extract_beam_forces(uID: ctypes.c_int, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int):
+def extract_beam_forces(uID: ctypes.c_int, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int, position_values=(0.0, 0.25, 0.5, 0.75, 1.0)):
 
     nBeams = ctypes.c_int(0)
     St7.St7GetTotal(uID, St7.tyBEAM, ctypes.byref(nBeams))
@@ -929,11 +935,6 @@ def extract_beam_forces(uID: ctypes.c_int, primary_combo_count: ctypes.c_int, se
 
     # The following ensures that the result positions are output as a ratio of the overall member length (0.0...1.0)
     St7.St7SetBeamResultPosMode(uID, St7.bpParam)
-
-    # The following setting (number of stations and positions) is hard-baked
-    # Can decouple from this function in the future, but haven't needed to so far.
-    num_stations_requested = 5
-    position_values = [0.0, 0.25, 0.5, 0.75, 1.0]
 
     # Shifted beam results outside the result case loop - SQL transaction will occur only once at the end
     # rather than after every result case, which should enhance performance a bit.  May need to
@@ -951,7 +952,7 @@ def extract_beam_forces(uID: ctypes.c_int, primary_combo_count: ctypes.c_int, se
             # Number of result columns (i.e. fields)
             number_columns = ctypes.c_int(0)
 
-            force_array = ctypes.c_double * (num_stations_requested * St7.kMaxBeamResult)
+            force_array = ctypes.c_double * (len(position_values) * St7.kMaxBeamResult)
             forces = force_array()
 
             # Station positions along the element for querying loads
@@ -961,10 +962,10 @@ def extract_beam_forces(uID: ctypes.c_int, primary_combo_count: ctypes.c_int, se
 
             # Get the beam results using the Strand API
             St7.St7GetBeamResultArrayPos(uID, St7.rtBeamForce, St7.stBeamPrincipal, beam, case_number,
-                                         num_stations_requested, positions, ctypes.byref(number_columns), forces)
+                                         len(position_values), positions, ctypes.byref(number_columns), forces)
 
             # Access the forces from each beam at each station position, and add these to the result list
-            for i in range(num_stations_requested):
+            for i in range(len(position_values)):
                 position = f"{position_values[i]:.2f}"
                 fx = forces[(i * 6) + St7.ipBeamAxialF]
                 fy = forces[(i * 6) + St7.ipBeamSF1]
@@ -1163,8 +1164,6 @@ def extract_model_data(model_file: str, result_file: str, scratch_path: str, par
 
     # Initialize the Strand7 model
     init = initialize_model(model_file, result_file, scratch_path)
-    if not init:
-        raise RuntimeError("Failed to initialize Strand7 model and results.")
     uID, primary_combo_count, secondary_combo_count = init
 
     # Get the number of load cases
