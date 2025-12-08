@@ -23,13 +23,13 @@ if __name__ == '__main__':
     # SPECIFY INPUT FILE PATHS
     # ----------------------------------------------------------------------
 
-    input_directory = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.9"
-    db_files = [r"V1_3_9_LB_Gmax.db",
-                r"V1_3_9_LB_Gmin.db",
-                r"V1_3_9_UB_Gmax.db",
-                r"V1_3_9_UB_Gmin.db"]
+    input_directory = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4"
+    db_files = [r"V1_4_4_LB_Gmax.db",
+                r"V1_4_4_LB_Gmin.db",
+                r"V1_4_4_UB_Gmax.db",
+                r"V1_4_4_UB_Gmin.db"]
 
-    output_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.9\2025-05-04 Group_Envelope_Results.csv"
+    output_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\2025-05-04 Skylight Group_Envelope_Results.csv"
 
     file_paths = [os.path.join(input_directory, db) for db in db_files]
 
@@ -37,7 +37,7 @@ if __name__ == '__main__':
     # ESTABLISH CONNECTION WITH DATABASE FILES
     # ----------------------------------------------------------------------
 
-    # Envelope query called on the combined SQLite connection
+    # Envelope write_full_beam_forces_query called on the combined SQLite connection
     envelope_query = """ WITH ABS_ENV AS (
     SELECT
     GroupName,
@@ -48,7 +48,8 @@ if __name__ == '__main__':
     MAX(My) AS My,
     MAX(Mz) AS Mz
     FROM BeamForces AS BF
-    JOIN BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber 
+    JOIN BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber
+    WHERE GroupName LIKE "%RoofLight%"
     GROUP BY GroupName
     
     UNION ALL
@@ -62,7 +63,8 @@ if __name__ == '__main__':
     MIN(My) AS My,
     MIN(Mz) AS Mz
     FROM BeamForces AS BF
-    JOIN BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber 
+    JOIN BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber
+    WHERE GroupName LIKE "%RoofLight%"
     GROUP BY GroupName
 
     UNION ALL 
@@ -76,7 +78,8 @@ if __name__ == '__main__':
     MAX(My) AS My,
     MAX(Mz) AS Mz
     FROM db2.BeamForces AS BF
-    JOIN db2.BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber 
+    JOIN db2.BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber
+    WHERE GroupName LIKE "%RoofLight%"
     GROUP BY GroupName
 
     UNION ALL 
@@ -90,7 +93,8 @@ if __name__ == '__main__':
     MIN(My) AS My,
     MIN(Mz) AS Mz
     FROM db2.BeamForces AS BF
-    JOIN db2.BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber 
+    JOIN db2.BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber
+    WHERE GroupName LIKE "%RoofLight%"
     GROUP BY GroupName
 
     UNION ALL
@@ -104,7 +108,8 @@ if __name__ == '__main__':
     MAX(My) AS My,
     MAX(Mz) AS Mz
     FROM db3.BeamForces AS BF
-    JOIN db3.BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber 
+    JOIN db3.BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber
+    WHERE GroupName LIKE "%RoofLight%"
     GROUP BY GroupName
     
     UNION ALL
@@ -118,7 +123,8 @@ if __name__ == '__main__':
     MIN(My) AS My,
     MIN(Mz) AS Mz
     FROM db3.BeamForces AS BF
-    JOIN db3.BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber 
+    JOIN db3.BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber
+    WHERE GroupName LIKE "%RoofLight%"
     GROUP BY GroupName
 
     UNION ALL
@@ -132,7 +138,8 @@ if __name__ == '__main__':
     MAX(My) AS My,
     MAX(Mz) AS Mz
     FROM db4.BeamForces AS BF
-    JOIN db4.BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber 
+    JOIN db4.BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber
+    WHERE GroupName LIKE "%RoofLight%"
     GROUP BY GroupName
     
     UNION ALL
@@ -146,7 +153,8 @@ if __name__ == '__main__':
     MIN(My) AS My,
     MIN(Mz) AS Mz
     FROM db4.BeamForces AS BF
-    JOIN db4.BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber 
+    JOIN db4.BeamProperties AS BP ON BP.BeamNumber = BF.BeamNumber
+    WHERE GroupName LIKE "%RoofLight%"
     GROUP BY GroupName
     )
     
@@ -190,7 +198,7 @@ if __name__ == '__main__':
 
             results = cursor.execute(envelope_query).fetchall()
 
-            # Write the results of the envelope query to a CSV file
+            # Write the results of the envelope write_full_beam_forces_query to a CSV cruciform_output_file
             headers = ["GroupName", "Fx", "Fy", "Fz", "Mx", "My", "Mz"]
             writer = csv.writer(out_file)
             writer.writerow(headers)

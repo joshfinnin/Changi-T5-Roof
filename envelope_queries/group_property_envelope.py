@@ -22,13 +22,13 @@ if __name__ == '__main__':
     # SPECIFY INPUT FILE PATHS
     # ----------------------------------------------------------------------
 
-    input_directory = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.9"
-    db_files = [r"V1_3_9_LB_Gmax.db",
-                r"V1_3_9_LB_Gmin.db",
-                r"V1_3_9_UB_Gmax.db",
-                r"V1_3_9_UB_Gmin.db"]
+    input_directory = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4"
+    db_files = [r"V1_4_4_LB_Gmax.db",
+                r"V1_4_4_LB_Gmin.db",
+                r"V1_4_4_UB_Gmax.db",
+                r"V1_4_4_UB_Gmin.db"]
 
-    output_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.9\2025-05-04 Group_Property_Envelope_Results.csv"
+    output_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.4\2025-06-25 Group_Property_Envelope_Results.csv"
 
     file_paths = [os.path.join(input_directory, db) for db in db_files]
 
@@ -36,7 +36,7 @@ if __name__ == '__main__':
     # ESTABLISH CONNECTION WITH DATABASE FILES
     # ----------------------------------------------------------------------
 
-    # Envelope query called on the combined SQLite connection
+    # Envelope write_full_beam_forces_query called on the combined SQLite connection
     envelope_query = """ WITH ABS_ENV AS (
     SELECT
     GroupName,
@@ -192,7 +192,7 @@ if __name__ == '__main__':
 
         cursor = connection.cursor()
 
-        # Priorize RAM if possible to speed up the query
+        # Priorize RAM if possible to speed up the write_full_beam_forces_query
         cursor.execute("""PRAGMA temp_store=1;""")
 
         # Attach all of the additional databases to the first database
@@ -202,7 +202,7 @@ if __name__ == '__main__':
 
         results = cursor.execute(envelope_query).fetchall()
 
-        # Write the results of the envelope query to a CSV file
+        # Write the results of the envelope write_full_beam_forces_query to a CSV cruciform_output_file
         headers = ["GroupName", "PropertyName", "Fx", "Fy", "Fz", "Mx", "My", "Mz"]
         writer = csv.writer(out_file)
         writer.writerow(headers)

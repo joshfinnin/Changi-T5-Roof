@@ -4,62 +4,69 @@ structural_geometry_mappers.py
 Module that defines a few helper objects for wrangling and mapping structural geometric data.
 """
 
-from sqlite3 import *
 from math import sqrt
 import numpy as np
 from typing import Union, Dict
 from dataclasses import dataclass
 from collections import defaultdict
 
-S7_GEOMETRY_QUERY = """SELECT
-BeamNumber,
-node1.X,
-node1.Y,
-node1.Z,
-node2.X,
-node2.Y,
-node2.Z,
-PropertyName
-FROM BeamProperties AS BP
-JOIN NodalCoordinates AS node1 ON node1.NodeNumber = BP.N1
-JOIN NodalCoordinates AS node2 ON node2.NodeNumber = BP.N2;"""
 
-
-@dataclass
+@dataclass(eq=True, frozen=True)
 class Node:
+    number: int
     x: float
     y: float
     z: float
 
-    def __eq__(self, other):
+    def __str__(self):
+        return f"Node({self.number} | x={round(self.x, 3)} | y={round(self.y, 3)} | z={round(self.z, 3)})"
+
+    def __repr__(self):
+        return self.__str__()
+
+    def __getitem__(self, item):
+        if isinstance(item, int) or isinstance(item, slice):
+            return [self.x, self.y, self.z][item]
+        elif isinstance(item, str):
+            return self.__dict__[item]
+        else:
+            raise TypeError(f"Item {item} must be an index or slice.")
+
+    def __add__(self, other):
         if isinstance(other, Node):
-            if sqrt((other.x - self.x) ** 2 + (other.y - self.y) ** 2 + (other.z - self.z) ** 2) < 0.0001:
-                return True
-        elif isinstance(other, list) or isinstance(other, tuple):
-            if sqrt((other[0] - self.x) ** 2 + (other[1] - self.y) ** 2 + (other[2] - self.z) ** 2) < 0.0001:
-                return True
-        return False
+            return Node(0, self.x + other.x, self.y + other.y, self.z + other.z)
+
+    def __sub__(self, other):
+        if isinstance(other, Node):
+            return Node(0, self.x - other.x, self.y - other.y, self.z - other.z)
+
+    def __truediv__(self, other):
+        if isinstance(other, int) or isinstance(other, float):
+            return Node(0, self.x / other, self.y / other, self.z / other)
+
+    def get_dist(self, other):
+        return sqrt((other.x - self.x)**2 + (other.y - self.y)**2 + (other.z - self.z)**2)
 
 
 class Beam:
-    """Minimalist representation of a beam object.
+    """Representation of a beam object."""
 
-    Allows for indexing of the end points that define the beam with an override to __getitem__()."""
-
-    def __init__(self, number: int, start: Union[tuple, int], end: Union[tuple, int], profile: str, group: str):
+    def __init__(self, number: int, start: Node, end: Node, profile: str, group: str):
         self.number = int(number)
         self.start = start
         self.end = end
         self.profile = profile
         self.group = group
         self.length = self._get_length()
+        self.deflection_results = {}
+        self.result_position_list = []
+        self.midpoint = self.get_midpoint()
 
     def __getitem__(self, item):
-        # If indexed, returns the start and end point objects of the beam
         if isinstance(item, int):
             return [self.start, self.end][item]
         else:
-            raise ValueError(f"Index must be an integer, {type(item)}")
+            raise TypeError(f"Index must be an integer, {type(item)}")
 
     def __str__(self):
         return f"{self.number} | {self.start} -> {self.end} | {self.profile} | {self.group}"
@@ -70,6 +77,120 @@ class Beam:
     def _get_length(self):
         length = sqrt((self.end[0] - self.start[0])**2 + (self.end[1] - self.start[1])**2 + (self.end[2] - self.start[2])**2)
         return length
+
+    def get_midpoint(self):
+        return (self.start + self.end) / 2
+
+    def get_absolute_positions(self, relative_positions: tuple[float, ...]) -> list:
+        absolute_positions = [rp * self.length for rp in relative_positions]
+        return absolute_positions
+
+    @property
+    def deflection_results(self):
+        return self._deflection_results
+
+    @deflection_results.setter
+    def deflection_results(self, val):
+        self._deflection_results = val
+        if len(self.deflection_results.keys()) == 0:
+            pass
+        else:
+            self.result_position_list = list(list(self.deflection_results.values())[0].keys())
+
+
+class Member:
+
+    def __init__(self, start_node: Node, end_node: Node, ordered_beams: list[Beam], direction_bools: list[bool]):
+        self.start_node = start_node
+        self.end_node = end_node
+        self.ordered_beams = ordered_beams
+        self.direction_bools = direction_bools
+        self.length = self._get_length()
+        self.length_parameter_dict = self.get_parameters_for_length()
+        self.end_deflections = {}
+
+    def __str__(self):
+        return f"Member(N1: {self.start_node} -> N2: {self.end_node} | Beams: {tuple(b.number for b in self.ordered_beams)})"
+
+    def __repr__(self):
+        return self.__str__()
+
+    def _get_length(self) -> float:
+        length = sum(b.length for b in self.ordered_beams)
+        return length
+
+    def get_parameters_for_length(self, normalized=False) -> dict:
+        """Method for mapping the subsegment beam positions to the overall member positions.
+        Returns a dictionary with a 2-tuple of the beam number and position value as the keys
+        and the corresponding position along the member."""
+        parameter_dict = {}
+        cumulative_length = 0
+        for beam, dir_bool in zip(self.ordered_beams, self.direction_bools):
+            assert len(
+                beam.result_position_list) != 0, "The beam result position list is empty -> no parameter lengths."
+            if dir_bool:
+                for position in beam.result_position_list:
+                    position_parameter = (beam.number, position)
+                    absolute_position = cumulative_length + (position * beam.length)
+                    if normalized:
+                        parameter_dict[position_parameter] = absolute_position / self.length
+                    else:
+                        parameter_dict[position_parameter] = absolute_position
+            else:
+                for position in beam.result_position_list:
+                    position_parameter = (beam.number, position)
+                    absolute_position = cumulative_length + (beam.length - (position * beam.length))
+                    if normalized:
+                        parameter_dict[position_parameter] = absolute_position / self.length
+                    else:
+                        parameter_dict[position_parameter] = absolute_position
+
+            cumulative_length += beam.length
+
+        return parameter_dict
+
+    def get_dz_dl(self, dz_start: float, dz_end: float):
+        """Method to find the equation that describes the deformed line segment that occurs
+        between the displaced start point and the displaced end point."""
+        dz_dl = (dz_end - dz_start) / self.length
+        return dz_dl
+
+    def get_relative_dz(self, dz_dl: float, beam_dz: float, start_dz: float, beam_position_tuple: tuple[int, float]):
+        """Method to get the deflection of the point relative to the straight line segment
+        joining the start and end points of the deformed beam."""
+        length_point = self.length_parameter_dict[beam_position_tuple]
+        return beam_dz - start_dz - (dz_dl * length_point)
+
+    def get_beam_deflections(self):
+        """Method for calculating the relative deflections of each beam point relative to the entire member length."""
+        dz_dls = {k: self.get_dz_dl(self.end_deflections[self.start_node][k],
+                                    self.end_deflections[self.end_node][k]) for k in
+                  self.end_deflections[self.start_node].keys()}
+        for beam in self.ordered_beams:
+            deflection_results = beam.deflection_results
+            for load_combination, position_dict in deflection_results.items():
+                dz_dl = dz_dls[load_combination]
+                start_dz = self.end_deflections[self.start_node][load_combination]
+                end_dz = self.end_deflections[self.end_node][load_combination]
+                for position, deflection in position_dict.items():
+                    relative_dz = self.get_relative_dz(dz_dl, deflection, start_dz, (beam.number, position))
+                    if abs(relative_dz) > 0.0:
+                        relative_to_span = round(self.length / abs(relative_dz), 3)
+                    else:
+                        relative_to_span = 10_000
+                    result = {"Member": self.__str__(),
+                    "MemberLength" : self.length,
+                    "N1Dz": start_dz,
+                    "N2Dz": end_dz,
+                    "Beam": beam.number,
+                    "GroupName": beam.group,
+                    "LoadCombo": load_combination,
+                    "Position": position,
+                    "Dz/DL": dz_dl,
+                    "AbsoluteDz": deflection,
+                    "RelativeDz": relative_dz,
+                    "SpanRatio": relative_to_span}
+                    yield result
 
 
 class GeometricTransformer:
@@ -204,7 +325,7 @@ class GeometricTransformer:
 
 
 class BeamJoiner:
-    def __init__(self, model_beams: list[Beam], node_dict: dict = None,  tolerance=0.005,
+    def __init__(self, model_beams: list[Beam], node_dict: dict = None,  tolerance=0.05,
                  target_groups: tuple[str, ...] = ()):
         """
         Class that allows for joining of strings of beams based on rule sets.
@@ -219,6 +340,7 @@ class BeamJoiner:
         Only the target_group elements will have grouping result returned.
         """
         self.model_beams = model_beams
+        self.node_dict = node_dict
         self.tolerance = tolerance
         self.target_groups = target_groups
 
@@ -226,11 +348,6 @@ class BeamJoiner:
             self.target_beams = [b for b in self.model_beams if b.group in self.target_groups]
         else:
             self.target_beams = self.model_beams
-
-        if node_dict:
-            self.node_dict = node_dict
-        else:
-            self.node_dict = self._get_node_dict()
 
         self.node_element_dict, self.beam_topology_dict = self._get_nodal_association_and_beam_dicts()
 
@@ -240,28 +357,23 @@ class BeamJoiner:
         """
         Method to create a node dictionary.
 
-        Method is only invoked if NODE_DICT has not been provided as an input.
-        The nodes are determined by finding common points from the full collection of model
-        beam coordinates. If the points occur within a particular tolerance, a node with a
-        unique number is created and added to the dictionary.
+        Method is only invoked if node_dict has not been provided as an input.
 
         Effectively allows a collection of geometrically defined beams to be converted to
         a collection of topologically defined beams.
-        :return: NODE_DICT
+        :return: dict
         """
 
         # Start with an empty list
-        node_list = []
+        node_set = set()
+
+        # Iterate through the beams
         for beam in self.model_beams:
-            node1 = Node(*beam.start)
-            node2 = Node(*beam.end)
-            if node1 not in node_list:
-                node_list.append(node1)
-            if node2 not in node_list:
-                node_list.append(node2)
+            node_set.add(beam.start)
+            node_set.add(beam.end)
 
         # Once the list has been completely populated, convert it to a dictionary
-        node_dict = {i: n for i, n in zip(range(1, len(node_list) + 1), node_list)}
+        node_dict = {n.number: n for n in node_set}
 
         return node_dict
 
@@ -269,7 +381,9 @@ class BeamJoiner:
         """
         Method for finding the association between nodes and beams.
 
-        Returns a dictionary of nodes and their associated beams, and vice versa.
+        Returns two dictionaries:
+        - A dictionary with the node numbers as keys and the values a list of beams connected to that node
+        - A dictionary with the beam numbers as the keys as the beams and the values the nodes defining that beam.
         """
         node_list = [i for i in self.node_dict.keys()]
         node_list.sort()
@@ -279,15 +393,19 @@ class BeamJoiner:
 
         beam_topology_dict = {}
         # Assign nodes to the end of each beam
+        # Iterate through the beams
         for beam in self.model_beams:
             beam_nodes = []
-            for i in range(len(node_list)):
-                if beam.start == self.node_dict[i + 1]:
-                    beam_nodes.append(i + 1)
-                    node_element_dict[i + 1].append(beam.number)
-                if beam.end == self.node_dict[i + 1]:
-                    beam_nodes.append(i + 1)
-                    node_element_dict[i + 1].append(beam.number)
+            # Iterate through the nodes
+            for i in range(1, len(node_list) + 1):
+                if beam.start == self.node_dict[i]:
+                    beam_nodes.append(i)
+                    node_element_dict[i].append(beam.number)
+
+                if beam.end == self.node_dict[i]:
+                    beam_nodes.append(i)
+                    node_element_dict[i].append(beam.number)
+
             beam_topology_dict[beam.number] = beam_nodes
 
         return node_element_dict, beam_topology_dict
@@ -298,10 +416,10 @@ class BeamJoiner:
         """
 
         # Convert the start and end points into numpy arrays for vector arithmetic.
-        start1 = np.array(beam1.start)
-        end1 = np.array(beam1.end)
-        start2 = np.array(beam2.start)
-        end2 = np.array(beam2.end)
+        start1 = np.array(beam1.start[1:3])
+        end1 = np.array(beam1.end[1:3])
+        start2 = np.array(beam2.start[1:3])
+        end2 = np.array(beam2.end[1:3])
 
         # Compute the direction vectors of each beam.
         vec1 = end1 - start1
@@ -347,9 +465,9 @@ class BeamJoiner:
     def _check_membership(self, beam1: Beam, beam2: Beam) -> bool:
         """
         Function for checking whether the referenced beams occur as part of the same member group.
-        :param beam1:
-        :param beam2:
-        :return:
+        :param beam1: Beam
+        :param beam2: Beam
+        :return: Bool
         """
         if self._check_collinear(beam1, beam2) and self._check_connectivity(beam1, beam2) \
                 and self._check_profile_match(beam1, beam2):
@@ -379,12 +497,8 @@ class BeamJoiner:
         # Step 2: Merge sets for beams that are collinear and satisfy connectivity.
         # Can change the below line to only iterate through the target, but cbf at the moment
         n = len(self.target_beams)
-        progress_increment = int(n / 100)
-        print(f"Commencing beam segment grouping. Target groups: {self.target_groups}")
+        print(f"Commencing beam segment grouping. Target group: {self.target_groups}")
         for i in range(n):
-            if i == progress_increment:
-                print(f"\t{i / n:.2%} of grouping complete")
-                progress_increment += int(n / 100)
             for j in range(i + 1, n):
                 # Ensure beams are collinear and pass the membership checks.
                 if self._check_membership(self.target_beams[i], self.target_beams[j]):
@@ -396,6 +510,7 @@ class BeamJoiner:
             root = self._find(beam.number, parent)
             groups.setdefault(root, []).append(beam)
         group_lists = list(groups.values())
+        print("\tGrouping complete.")
         return group_lists
 
 

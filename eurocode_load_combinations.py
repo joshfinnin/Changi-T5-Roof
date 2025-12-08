@@ -182,7 +182,7 @@ class CombinationCase:
             self.accompanying_case_dict[case_name] = case
 
     def get_combination_string(self):
-        """Creates the text file input string for the Strand7 analysis model."""
+        """Creates the text load combination input string for the Strand7 analysis model."""
         spacer = "      "
         factors = []
         for lc_number, lc_name in LOAD_CASE_DICT.items():
@@ -211,7 +211,7 @@ class CombinationCase:
 
     def __str__(self):
         """Generates a string to represent a combination.
-        At the moment, this is just the short hand name of the combination."""
+        At the moment, this is just the shorthand name of the combination."""
         combination_name = f"{self.stage_tag}{self.permanent_direction.name} + Ld({self.leading_direction.name}) + " \
                            f"Ac({' + '.join([ac.name for ac in self.accompanying_directions])})"
         return combination_name
@@ -280,10 +280,10 @@ if __name__ == '__main__':
     # 5. A series of Actions are provided to a CombinationFactory.
     # 6. The CombinationFactory then uses the Eurocode algorithm to
     # generate load combinations in bulk.
-    # 7. These are then written to file, and a string represention printed
+    # 7. These are then written to output_file, and a string representation printed
     # to the console.
-    # The USER SHOULD ENSURE that the file path for the output .lcf file is
-    # correct,component cases are correct, the directions are correct, the
+    # The USER SHOULD ENSURE that the output_file path for the output .lcf output_file is
+    # correct, component cases are correct, the directions are correct, the
     # actions are appropriately included, the factors are correct, and any
     # filtering at the end is appropriate to their needs.
     # ----------------------------------------------------------------------
@@ -291,7 +291,7 @@ if __name__ == '__main__':
     # ----------------------------------------------------------------------
     # DEFINE OUTPUT FILE PATH
     # ----------------------------------------------------------------------
-    combination_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.3.9\Stage 2&3.lcf"
+    combination_fp = r"C:\Users\Josh.Finnin\Mott MacDonald\MBC SAM Project Portal - 01-Structures\Work\Design\05 - Roof\01 - FE Models\V1.4.5\Stage 2_UP_SIF.lcf"
 
     # ----------------------------------------------------------------------
     # PERMANENT ACTIONS
@@ -304,6 +304,27 @@ if __name__ == '__main__':
     gmin_direction = [Direction("Gmin", gmin_components, VertDirectionTag.NA)]
     GMIN_ACTION = Action("Gmin", ActionType.PERMANENT_ACTION, gmin_direction)
 
+    # gmax_factor_set = FactorSet(0.0, 1.35, 1.35)
+    # gmax_component_names = ["1: SW_Self weight",
+    #                         "3: SW_Connection allowance (max)",
+    #                         "5: SDL_Cladding (min)",
+    #                         "6: SDL_Cladding (additional)",
+    #                         "7: SDL_Services (min)",
+    #                         "8: SDL_Services (additional)"]
+    # gmax_components = [ComponentCase(c, gmax_factor_set) for c in gmax_component_names]
+    # gmax_direction = [Direction("Gmax", gmax_components, VertDirectionTag.NA)]
+    # GMAX_ACTION = Action("Gmax", ActionType.PERMANENT_ACTION, gmax_direction)
+
+    # The Gmax stage 1 action omits the additional cladding and additional services SDLs (these come in stage 2)
+    gmax_factor_set = FactorSet(0.0, 1.35, 1.35)
+    gmax_component_names = ["1: SW_Self weight",
+                            "3: SW_Connection allowance (max)",
+                            "5: SDL_Cladding (min)",
+                            "7: SDL_Services (min)"]
+    gmax_components = [ComponentCase(c, gmax_factor_set) for c in gmax_component_names]
+    gmax_direction = [Direction("Gmax", gmax_components, VertDirectionTag.NA)]
+    GMAX_ACTION_STAGE_1 = Action("Gmax", ActionType.PERMANENT_ACTION, gmax_direction)
+
     gmax_factor_set = FactorSet(0.0, 1.35, 1.35)
     gmax_component_names = ["1: SW_Self weight",
                             "3: SW_Connection allowance (max)",
@@ -313,7 +334,7 @@ if __name__ == '__main__':
                             "8: SDL_Services (additional)"]
     gmax_components = [ComponentCase(c, gmax_factor_set) for c in gmax_component_names]
     gmax_direction = [Direction("Gmax", gmax_components, VertDirectionTag.NA)]
-    GMAX_ACTION = Action("Gmax", ActionType.PERMANENT_ACTION, gmax_direction)
+    GMAX_ACTION_STAGE_2 = Action("Gmax", ActionType.PERMANENT_ACTION, gmax_direction)
 
     # ----------------------------------------------------------------------
     # WIND ACTIONS
@@ -322,24 +343,24 @@ if __name__ == '__main__':
     wind_45_factor_set = FactorSet(0.0, 1.5 * 0.7, 1.5 * 0.5 * 0.7)  # Same as above, but using 70% of each orthogonal
 
     # Stage 1 orthogonal wind up case names
-    wind_s1_XPU1_component_names = ["50: W1xpos-R UP", "70: W1xpos-W"]
-    wind_s1_XPU2_component_names = ["51: W1xpos-R TP", "70: W1xpos-W"]
-    wind_s1_YPU1_component_names = ["54: W1ypos-R UP", "71: W1ypos-W"]
-    wind_s1_YPU2_component_names = ["55: W1ypos-R TP", "71: W1ypos-W"]
-    wind_s1_XNU1_component_names = ["58: W1xneg-R UP", "72: W1xneg-W"]
-    wind_s1_XNU2_component_names = ["59: W1xneg-R TP", "72: W1xneg-W"]
-    wind_s1_YNU1_component_names = ["62: W1yneg-R UP", "73: W1yneg-W"]
-    wind_s1_YNU2_component_names = ["63: W1yneg-R TP", "73: W1yneg-W"]
+    wind_s1_XPU1_component_names = ["52: W1xpos-R US", "70: W1xpos-W"]
+    wind_s1_XPU2_component_names = ["53: W1xpos-R TS", "70: W1xpos-W"]
+    wind_s1_YPU1_component_names = ["56: W1ypos-R US", "71: W1ypos-W"]
+    wind_s1_YPU2_component_names = ["57: W1ypos-R TS", "71: W1ypos-W"]
+    wind_s1_XNU1_component_names = ["60: W1xneg-R US", "72: W1xneg-W"]
+    wind_s1_XNU2_component_names = ["61: W1xneg-R TS", "72: W1xneg-W"]
+    wind_s1_YNU1_component_names = ["64: W1yneg-R US", "73: W1yneg-W"]
+    wind_s1_YNU2_component_names = ["65: W1yneg-R TS", "73: W1yneg-W"]
 
     # Stage 1 orthogonal wind down case names
-    wind_s1_XPD1_component_names = ["52: W1xpos-R US", "70: W1xpos-W"]
-    wind_s1_XPD2_component_names = ["53: W1xpos-R TS", "70: W1xpos-W"]
-    wind_s1_YPD1_component_names = ["56: W1ypos-R US", "71: W1ypos-W"]
-    wind_s1_YPD2_component_names = ["57: W1ypos-R TS", "71: W1ypos-W"]
-    wind_s1_XND1_component_names = ["60: W1xneg-R US", "72: W1xneg-W"]
-    wind_s1_XND2_component_names = ["61: W1xneg-R TS", "72: W1xneg-W"]
-    wind_s1_YND1_component_names = ["64: W1yneg-R US", "73: W1yneg-W"]
-    wind_s1_YND2_component_names = ["65: W1yneg-R TS", "73: W1yneg-W"]
+    wind_s1_XPD1_component_names = ["50: W1xpos-R UP", "70: W1xpos-W"]
+    wind_s1_XPD2_component_names = ["51: W1xpos-R TP", "70: W1xpos-W"]
+    wind_s1_YPD1_component_names = ["54: W1ypos-R UP", "71: W1ypos-W"]
+    wind_s1_YPD2_component_names = ["55: W1ypos-R TP", "71: W1ypos-W"]
+    wind_s1_XND1_component_names = ["58: W1xneg-R UP", "72: W1xneg-W"]
+    wind_s1_XND2_component_names = ["59: W1xneg-R TP", "72: W1xneg-W"]
+    wind_s1_YND1_component_names = ["62: W1yneg-R UP", "73: W1yneg-W"]
+    wind_s1_YND2_component_names = ["63: W1yneg-R TP", "73: W1yneg-W"]
 
     # Stage 1 45 degree wind case names
     wind_s1_45_XPYP_component_names = ["70: W1xpos-W", "71: W1ypos-W"]
@@ -348,16 +369,16 @@ if __name__ == '__main__':
     wind_s1_45_XNYN_component_names = ["72: W1xneg-W", "73: W1yneg-W"]
 
     # Stage 2 orthogonal wind up case names
-    wind_s2_XPU_component_names = ["15: Ws +X_Walls E", "19: Ws_Walls IP", "30: Ws_Roof IP", "22: Ws +X_Roof EP", "33: Ws_Roof_Overhang UP"]
-    wind_s2_XNU_component_names = ["17: Ws -X_Walls E", "19: Ws_Walls IP", "30: Ws_Roof IP", "26: Ws -X_Roof EP", "33: Ws_Roof_Overhang UP"]
-    wind_s2_YPU_component_names = ["16: Ws +Y_Walls E", "19: Ws_Walls IP", "30: Ws_Roof IP", "24: Ws +Y_Roof EP", "33: Ws_Roof_Overhang UP"]
-    wind_s2_YNU_component_names = ["18: Ws -Y_Walls E", "19: Ws_Walls IP", "30: Ws_Roof IP", "28: Ws -Y_Roof EP", "33: Ws_Roof_Overhang UP"]
+    wind_s2_XPU_component_names = ["15: Ws +X_Walls E", "19: Ws_Walls IP", "30: Ws_Roof IP", "23: Ws +X_Roof ES", "33: Ws_Roof_Overhang UP"]
+    wind_s2_XNU_component_names = ["17: Ws -X_Walls E", "19: Ws_Walls IP", "30: Ws_Roof IP", "27: Ws -X_Roof ES", "33: Ws_Roof_Overhang UP"]
+    wind_s2_YPU_component_names = ["16: Ws +Y_Walls E", "19: Ws_Walls IP", "30: Ws_Roof IP", "25: Ws +Y_Roof ES",  "33: Ws_Roof_Overhang UP"]
+    wind_s2_YNU_component_names = ["18: Ws -Y_Walls E", "19: Ws_Walls IP", "30: Ws_Roof IP", "29: Ws -Y_Roof ES", "33: Ws_Roof_Overhang UP"]
 
     # Stage 2 orthogonal wind down case names
-    wind_s2_XPD_component_names = ["15: Ws +X_Walls E", "20: Ws_Walls IS", "31: Ws_Roof IS", "23: Ws +X_Roof ES", "32: Ws_Roof_Overhang DN"]
-    wind_s2_XND_component_names = ["17: Ws -X_Walls E", "20: Ws_Walls IS", "31: Ws_Roof IS", "27: Ws -X_Roof ES", "32: Ws_Roof_Overhang DN"]
-    wind_s2_YPD_component_names = ["16: Ws +Y_Walls E", "20: Ws_Walls IS", "31: Ws_Roof IS", "25: Ws +Y_Roof ES", "32: Ws_Roof_Overhang DN"]
-    wind_s2_YND_component_names = ["18: Ws -Y_Walls E", "20: Ws_Walls IS", "31: Ws_Roof IS", "29: Ws -Y_Roof ES", "32: Ws_Roof_Overhang DN"]
+    wind_s2_XPD_component_names = ["15: Ws +X_Walls E", "20: Ws_Walls IS", "31: Ws_Roof IS", "22: Ws +X_Roof EP", "32: Ws_Roof_Overhang DN"]
+    wind_s2_XND_component_names = ["17: Ws -X_Walls E", "20: Ws_Walls IS", "31: Ws_Roof IS", "26: Ws -X_Roof EP", "32: Ws_Roof_Overhang DN"]
+    wind_s2_YPD_component_names = ["16: Ws +Y_Walls E", "20: Ws_Walls IS", "31: Ws_Roof IS", "24: Ws +Y_Roof EP", "32: Ws_Roof_Overhang DN"]
+    wind_s2_YND_component_names = ["18: Ws -Y_Walls E", "20: Ws_Walls IS", "31: Ws_Roof IS", "28: Ws -Y_Roof EP", "32: Ws_Roof_Overhang DN"]
 
     # Stage 2 45 degree wind case names
     wind_s2_45_XPYP_component_names = ["15: Ws +X_Walls E", "16: Ws +Y_Walls E", "19: Ws_Walls IP"]
@@ -384,10 +405,10 @@ if __name__ == '__main__':
     wind_s1_YND1_components = [ComponentCase(c, wind_orthogonal_factor_set) for c in wind_s1_YND1_component_names]
     wind_s1_YND2_components = [ComponentCase(c, wind_orthogonal_factor_set) for c in wind_s1_YND2_component_names]
 
-    wind_s1_45_XPYP_components = [ComponentCase(c, wind_orthogonal_factor_set) for c in wind_s1_45_XPYP_component_names]
-    wind_s1_45_XPYN_components = [ComponentCase(c, wind_orthogonal_factor_set) for c in wind_s1_45_XPYN_component_names]
-    wind_s1_45_XNYP_components = [ComponentCase(c, wind_orthogonal_factor_set) for c in wind_s1_45_XNYP_component_names]
-    wind_s1_45_XNYN_components = [ComponentCase(c, wind_orthogonal_factor_set) for c in wind_s1_45_XNYN_component_names]
+    wind_s1_45_XPYP_components = [ComponentCase(c, wind_45_factor_set) for c in wind_s1_45_XPYP_component_names]
+    wind_s1_45_XPYN_components = [ComponentCase(c, wind_45_factor_set) for c in wind_s1_45_XPYN_component_names]
+    wind_s1_45_XNYP_components = [ComponentCase(c, wind_45_factor_set) for c in wind_s1_45_XNYP_component_names]
+    wind_s1_45_XNYN_components = [ComponentCase(c, wind_45_factor_set) for c in wind_s1_45_XNYN_component_names]
 
     # Stage 2 component cases
     wind_s2_XPU_components = [ComponentCase(c, wind_orthogonal_factor_set) for c in wind_s2_XPU_component_names]
@@ -448,7 +469,7 @@ if __name__ == '__main__':
     # ----------------------------------------------------------------------
     # LIVE ACTIONS
     # ----------------------------------------------------------------------
-    live_factor_set = FactorSet(0.0, 1.5, 1.0)
+    live_factor_set = FactorSet(0.0, 1.5, 1.5 * 0.7)
     live_component_names = ["10: LL_Roof",
                             "11: LL_Suspended Floors",
                             "12: LL_Ground Slab",
@@ -461,7 +482,7 @@ if __name__ == '__main__':
     # ----------------------------------------------------------------------
     # THERMAL ACTIONS
     # ----------------------------------------------------------------------
-    thermal_factor_set = FactorSet(0.0, 1.5, 0.6)
+    thermal_factor_set = FactorSet(0.0, 1.5, 1.5 * 0.6)
     thermal_component_names = ["35: T (+ve)", "36: T (-ve)"]
     thermal_components = [ComponentCase(c, thermal_factor_set) for c in thermal_component_names]
     thermal_directions = [Direction(c.name.split(": ")[-1], [c], VertDirectionTag.NA) for c in thermal_components]
@@ -486,15 +507,15 @@ if __name__ == '__main__':
     # ----------------------------------------------------------------------
 
     actions_stage1_up = [GMIN_ACTION, WIND_STAGE1_ACTION, THERMAL_ACTION, EHF_ACTION]
-    actions_stage1_down = [GMAX_ACTION, LIVE_ACTION, WIND_STAGE1_ACTION, THERMAL_ACTION, EHF_ACTION]
+    actions_stage1_down = [GMAX_ACTION_STAGE_1, LIVE_ACTION, WIND_STAGE1_ACTION, THERMAL_ACTION, EHF_ACTION]
     actions_stage2_up = [GMIN_ACTION, WIND_STAGE2_ACTION, THERMAL_ACTION, EHF_ACTION]
-    actions_stage2_down = [GMAX_ACTION, LIVE_ACTION, WIND_STAGE2_ACTION, THERMAL_ACTION, EHF_ACTION]
+    actions_stage2_down = [GMAX_ACTION_STAGE_2, LIVE_ACTION, WIND_STAGE2_ACTION, THERMAL_ACTION, EHF_ACTION]
 
     # ----------------------------------------------------------------------
     # USER INPUT REQUIRED HERE
     # ----------------------------------------------------------------------
-    combo_factory = CombinationFactory(actions_stage1_down, stage_tag="S1_") # <--------  EDIT THIS LINE TO USE THE ACTION LIST
-    vertical_filter = VertDirectionTag.UP  # <----------- FILTER SHOULD BE THE OPPOSITE OF THE ACTION SET (i.e. actions_stage1_down => VertDirectionTag.UP)
+    combo_factory = CombinationFactory(actions_stage2_up, stage_tag="S2_") # <----------- EDIT THIS LINE TO USE THE ACTION LIST
+    vertical_filter = VertDirectionTag.DOWN  # <----------- FILTER SHOULD BE THE OPPOSITE OF THE ACTION SET (i.e. actions_stage1_down => VertDirectionTag.UP)
 
     with open(combination_fp, 'w+') as file:
 
@@ -503,15 +524,12 @@ if __name__ == '__main__':
             if combination.leading_direction.component_cases[0].action.name == "EHF":
                 continue
 
-            # # For the time being, ignore all cases where the leading action is thermal
-            # elif combination.leading_direction.component_cases[0].action.name:
-            #     continue
-
             elif combination.leading_direction.direction_tag == vertical_filter:
                 continue
 
             elif any(acc_dir.direction_tag == vertical_filter for acc_dir in combination.accompanying_directions):
                 continue
+
 
             else:
                 file.write(combination.get_combination_string())

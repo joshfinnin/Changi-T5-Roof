@@ -5,7 +5,7 @@ database_extractor.py
 Module to extract the analysis results from a Strand7 model into a SQLite database or Parquet files.
 """
 
-__version__ = "1.2.2"
+__version__ = "1.2.4"
 
 import ctypes
 from sqlite3 import Connection, Cursor, connect
@@ -75,6 +75,15 @@ _BEAM_FORCE_SCHEMA = pa.schema([
     ("Mz", pa.float64())
 ])
 
+_BEAM_DISPLACEMENT_SCHEMA = pa.schema([("ResultId", pa.string()),
+                                       ("BeamNumber", pa.int32()),
+                                       ("ResultCase", pa.int32()),
+                                       ("ResultCaseName", pa.string()),
+                                       ("Position", pa.float64()),
+                                       ("Ux", pa.float64()),
+                                       ("Uy", pa.float64()),
+                                       ("Uz", pa.float64())])
+
 _BEAM_PROPERTIES_SCHEMA = pa.schema([
     ("BeamNumber", pa.int32()),
     ("N1", pa.int32()),
@@ -143,6 +152,7 @@ _NODAL_COORDINATES_SCHEMA = pa.schema([
 _NODAL_LOADING_SCHEMA = pa.schema([])
 
 SCHEMAS = {"BeamForces": _BEAM_FORCE_SCHEMA,
+           "BeamDisplacements": _BEAM_DISPLACEMENT_SCHEMA,
            "BeamProperties": _BEAM_PROPERTIES_SCHEMA,
            "NodalReactions": _NODAL_REACTIONS_SCHEMA,
            "NodalDisplacements": _NODAL_DISPLACEMENTS_SCHEMA,
@@ -151,6 +161,15 @@ SCHEMAS = {"BeamForces": _BEAM_FORCE_SCHEMA,
            "PlateCombinedStresses": _PLATE_DERIVED_STRESS_SCHEMA,
            "PlateProperties": _PLATE_PROPERTIES_SCHEMA,
            "PlateLoading": _PLATE_LOADING_SCHEMA}
+
+
+class ModelContext:
+    """Class to encapsulate information about the model required for the extraction functions."""
+    def __init__(self, uID, load_cases: int, primary_combo_count: int, secondary_combo_count: int):
+        self.uID = uID
+        self.load_cases = load_cases
+        self.primary_combo_count = primary_combo_count
+        self.secondary_combo_count = secondary_combo_count
 
 
 def _log_error_message(err_code: int):
@@ -628,6 +647,40 @@ def parquet_insert_beam_forces(uID: ctypes.c_int, primary_combo_count: ctypes.c_
 
     print("Beam force results written to DB.")
 
+def parquet_insert_beam_displacements(uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
+                                      secondary_combo_count: ctypes.c_int, directory: pathlib.Path):
+    result_ids = []
+    beam_numbers = []
+    case_numbers = []
+    case_names = []
+    position_results = []
+    uxs = []
+    uys = []
+    uzs = []
+
+    lists_to_process = (result_ids, beam_numbers, case_numbers, case_names, position_results, uxs, uys, uzs)
+
+    with pq.ParquetWriter(directory / "beam_displacements.parquet", SCHEMAS["BeamDisplacements"]) as writer:
+
+        counter = 0
+
+        for r in extract_beam_displacements(uID, primary_combo_count, secondary_combo_count):
+            result_ids.append(r[0])
+            beam_numbers.append(r[1])
+            case_numbers.append(r[2])
+            case_names.append(r[3])
+            position_results.append(r[4])
+            uxs.append(r[5])
+            uys.append(r[6])
+            uzs.append(r[7])
+            counter += 1
+
+            if counter % 50_000 == 0:
+                _create_parq_table(writer, lists_to_process, SCHEMAS["BeamDisplacements"])
+
+        _create_parq_table(writer, lists_to_process, SCHEMAS["BeamDisplacements"])
+
+    print("Beam displacements written to DB.")
 
 def parquet_insert_plate_properties(uID: ctypes.c_int, directory: pathlib.Path):
 
@@ -758,9 +811,6 @@ def initialize_model(model_file: str, result_file: str, scratch_path: str):
     except Exception as e:
         raise RuntimeError("Failed to initialize Strand7 model and results.") from e
 
-    finally:
-        St7.St7Release()
-
 
 # Function to extract nodal reactions
 def extract_nodal_reactions(uID: ctypes.c_int, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int):
@@ -778,7 +828,7 @@ def extract_nodal_reactions(uID: ctypes.c_int, primary_combo_count: ctypes.c_int
         St7.St7GetResultCaseName(uID, case_number, case_name, St7.kMaxStrLen)
 
         case_name_string = str(case_name.value.decode())
-        print(f"Extracting node reactions for load case {case_name_string}...")
+        print(f"Extracting node reactions for result case {case_name_string}...")
 
         for node in range(1, nNodes.value + 1):
 
@@ -816,7 +866,7 @@ def extract_nodal_displacements(uID: ctypes.c_int, primary_combo_count: ctypes.c
 
         case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
         St7.St7GetResultCaseName(uID, case_number, case_name, St7.kMaxStrLen)
-        print(f"Extracting node displacements for load case {case_name.value.decode()}...")
+        print(f"Extracting node displacements for result case {case_name.value.decode()}...")
 
         for node in range(1, nNodes.value + 1):
 
@@ -979,19 +1029,14 @@ def extract_beam_forces(uID: ctypes.c_int, primary_combo_count: ctypes.c_int, se
 
 
 # Function to extract the beam displacement results
-def extract_beam_displacements(conn: Connection, cursor: Cursor, uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
-                               secondary_combo_count: ctypes.c_int):
+def extract_beam_displacements(uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
+                               secondary_combo_count: ctypes.c_int, position_values=(0.0, 0.25, 0.5, 0.75, 1.0)):
     nBeams = ctypes.c_int(0)
     St7.St7GetTotal(uID, St7.tyBEAM, ctypes.byref(nBeams))
 
     # The following ensures that the result positions are output as a ratio of the overall member length (0.0...1.0)
     St7.St7SetBeamResultPosMode(uID, St7.bpParam)
 
-    num_stations_requested = 5
-
-    # Shifted beam results outside the result case loop - transactions will occur once at the end rather than after
-    # every result case, which should enhance performance
-    beam_results = []
     number_of_cases = primary_combo_count.value + secondary_combo_count.value
     for case_number in range(1, number_of_cases + 1):
 
@@ -1004,40 +1049,28 @@ def extract_beam_displacements(conn: Connection, cursor: Cursor, uID: ctypes.c_i
             # Number of result columns (i.e. fields)
             number_columns = ctypes.c_int(0)
 
-            displacement_array = ctypes.c_double * (num_stations_requested * St7.kMaxBeamResult)
-            displacements = displacement_array()
+            disp_array = ctypes.c_double * (len(position_values) * St7.kMaxBeamResult)
+            displacements = disp_array()
 
             # Station positions along the element for querying loads
-            position_values = [0.0, 0.25, 0.5, 0.75, 1.0]
             position_values_c = [ctypes.c_double(p) for p in position_values]
             pos_array = ctypes.c_double * len(position_values_c)
             positions = pos_array(*position_values_c)
 
             # Get the beam results using the Strand API
-            St7.St7GetBeamResultArrayPos(uID, St7.rtBeamDisp, St7.stBeamPrincipal, beam, case_number,
-                                         num_stations_requested, positions, ctypes.byref(number_columns), displacements)
+            St7.St7GetBeamResultArrayPos(uID, St7.rtBeamDisp, St7.stBeamGlobal, beam, case_number,
+                                         len(position_values), positions, ctypes.byref(number_columns), displacements)
 
             # Access the forces from each beam at each station position, and add these to the result list
-            for i in range(num_stations_requested):
+            for i in range(len(position_values)):
                 position = position_values[i]
-                dx = displacements[(i * 6) + 0]
-                dy = displacements[(i * 6) + 1]
-                dz = displacements[(i * 6) + 2]
-                rx = displacements[(i * 6) + 3]
-                ry = displacements[(i * 6) + 4]
-                rz = displacements[(i * 6) + 5]
+                ux = displacements[(i * 6) + 0]
+                uy = displacements[(i * 6) + 1]
+                uz = displacements[(i * 6) + 2]
                 sid = f"{beam}-{case_number}-{position:.2f}"
-                result = (sid, beam, case_number, case_name.value.decode(), position, dx, dy, dz, rx, ry, rz)
-                beam_results.append(result)
+                result = (sid, beam, case_number, case_name.value.decode(), position, ux, uy, uz)
+                yield result
 
-        # Insert the beam displacement results into the database
-        if len(beam_results) == 0:
-            print("Warning: Beam displacement result set is empty.")
-        else:
-            # Implementing smarter batching
-            if case_number % 100 == 0 or case_number == number_of_cases:
-                sql_insert_beam_displacements(conn, cursor, beam_results)
-                beam_results.clear()
 
 # Function to extract the plate attributes and properties
 def extract_plate_properties(uID: ctypes.c_int):
@@ -1160,7 +1193,7 @@ def extract_plate_combined_stresses(uID: ctypes.c_int, primary_combo_count: ctyp
 
 # Main function for extracting results
 def extract_model_data(model_file: str, result_file: str, scratch_path: str, parquet=False, directory=None,
-                       db_fp: str = None):
+                       db_fp: str = None, output_options=None):
 
     # Initialize the Strand7 model
     init = initialize_model(model_file, result_file, scratch_path)
@@ -1172,13 +1205,36 @@ def extract_model_data(model_file: str, result_file: str, scratch_path: str, par
 
     # Logic for creating the parquet files
     if parquet:
-        parquet_insert_nodal_coordinates(uID, directory)
-        parquet_insert_nodal_reactions(uID, primary_combo_count, secondary_combo_count, directory)
-        parquet_insert_nodal_displacements(uID, primary_combo_count, secondary_combo_count, directory)
-        parquet_insert_beam_forces(uID, primary_combo_count, secondary_combo_count, directory)
-        parquet_insert_beam_properties(uID, directory)
-        # parquet_insert_plate_properties(uID, directory)
-        # parquet_insert_plate_loading(uID, load_case_count, directory)
+        if not os.path.exists(directory):
+            os.mkdir(directory)
+        if output_options is None:
+
+            parquet_insert_nodal_coordinates(uID, directory)
+            parquet_insert_nodal_reactions(uID, primary_combo_count, secondary_combo_count, directory)
+            parquet_insert_nodal_displacements(uID, primary_combo_count, secondary_combo_count, directory)
+            parquet_insert_beam_forces(uID, primary_combo_count, secondary_combo_count, directory)
+            parquet_insert_beam_displacements(uID, primary_combo_count, secondary_combo_count, directory)
+            parquet_insert_beam_properties(uID, directory)
+            parquet_insert_plate_properties(uID, directory)
+            parquet_insert_plate_loading(uID, load_case_count, directory)
+
+        else:
+            if output_options["Nodal Coordinates"] == "TRUE":
+                parquet_insert_nodal_coordinates(uID, directory)
+            if output_options["Nodal Reactions"] == "TRUE":
+                parquet_insert_nodal_reactions(uID, primary_combo_count, secondary_combo_count, directory)
+            if output_options["Nodal Displacements"] == "TRUE":
+                parquet_insert_nodal_displacements(uID, primary_combo_count, secondary_combo_count, directory)
+            if output_options["Beam Properties"] == "TRUE":
+                parquet_insert_beam_properties(uID, directory)
+            if output_options["Beam Forces"] == "TRUE":
+                parquet_insert_beam_forces(uID, primary_combo_count, secondary_combo_count, directory)
+            if output_options["Beam Displacements"] == "TRUE":
+                parquet_insert_beam_displacements(uID, primary_combo_count, secondary_combo_count, directory)
+            if output_options["Plate Properties"] == "TRUE":
+                parquet_insert_plate_properties(uID, directory)
+            if output_options["Plate Loading"] == "TRUE":
+                parquet_insert_plate_loading(uID, load_case_count, directory)
 
     # If not running the parquet extraction, the program will extract to a SQLite db
     else:
@@ -1214,7 +1270,7 @@ def extract_model_data(model_file: str, result_file: str, scratch_path: str, par
                 sql_insert_beam_forces(conn, cursor, uID, primary_combo_count, secondary_combo_count)
 
                 # Extract beam displacements and store them in the database
-                extract_beam_displacements(conn, cursor, uID, primary_combo_count, secondary_combo_count)
+                extract_beam_displacements(uID, primary_combo_count, secondary_combo_count)
 
     # Close the Strand7 model
     St7.St7CloseResultFile(uID)
@@ -1258,96 +1314,5 @@ if __name__ == '__main__':
         directory = None
 
     extract_model_data(model_file, result_file, scratch_path=scratch_folder, parquet=parquet_output, directory=directory, db_fp=db_fp)
-
-    # nla_dict = {
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\36 ALS Removal S-TR02-01.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\36 ALS Removal S-TR02-01.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\36 ALS Removal S-TR02-01"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\37 ALS Removal S-TR02-02.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\37 ALS Removal S-TR02-02.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\37 ALS Removal S-TR02-02"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\38 ALS Removal S-TR05-01.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\38 ALS Removal S-TR05-01.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\38 ALS Removal S-TR05-01"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\39 ALS Removal S-TR05-02.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\39 ALS Removal S-TR05-02.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\39 ALS Removal S-TR05-02"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\40 ALS Removal S-TR04-01.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\40 ALS Removal S-TR04-01.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\40 ALS Removal S-TR04-01"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\41 ALS Removal S-TR11-01.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\41 ALS Removal S-TR11-01.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\41 ALS Removal S-TR11-01"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\42 ALS Removal S-TR13-01.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\42 ALS Removal S-TR13-01.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\42 ALS Removal S-TR13-01"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\43 ALS Removal S-TR13-02.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\43 ALS Removal S-TR13-02.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\43 ALS Removal S-TR13-02"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\44 ALS Removal S-TR13-03.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\44 ALS Removal S-TR13-03.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\44 ALS Removal S-TR13-03"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\45 ALS Removal S-TR13-04.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\45 ALS Removal S-TR13-04.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\45 ALS Removal S-TR13-04"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\46 ALS Removal S-TR14-01.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\46 ALS Removal S-TR14-01.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\46 ALS Removal S-TR14-01"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\47 ALS Removal S-TR14-02.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\47 ALS Removal S-TR14-02.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\47 ALS Removal S-TR14-02"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\48 ALS Removal S-TR14-03.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\48 ALS Removal S-TR14-03.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\48 ALS Removal S-TR14-03"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\49 ALS Removal S-TR14-04.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\49 ALS Removal S-TR14-04.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\49 ALS Removal S-TR14-04"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\50 ALS Removal S-TR01-01.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\50 ALS Removal S-TR01-01.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\50 ALS Removal S-TR01-01"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\51 ALS Removal S-TR01-02.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\51 ALS Removal S-TR01-02.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\51 ALS Removal S-TR01-02"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\54 ALS Removal S-TR02-03.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\54 ALS Removal S-TR02-03.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\54 ALS Removal S-TR02-03"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\58 ALS Removal S-TR05-03.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\58 ALS Removal S-TR05-03.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\58 ALS Removal S-TR05-03"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\59 ALS Removal S-TR06-01.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\59 ALS Removal S-TR06-01.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\59 ALS Removal S-TR06-01"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\60 ALS Removal S-TR06-02.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\60 ALS Removal S-TR06-02.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\60 ALS Removal S-TR06-02"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\61 ALS Removal S-TR06-03.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\61 ALS Removal S-TR06-03.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\61 ALS Removal S-TR06-03"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\62 ALS Removal S-TR07-01.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\62 ALS Removal S-TR07-01.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\62 ALS Removal S-TR07-01"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\63 ALS Removal S-TR07-02.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\63 ALS Removal S-TR07-02.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\63 ALS Removal S-TR07-02"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\64 ALS Removal S-TR07-03.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\64 ALS Removal S-TR07-03.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\64 ALS Removal S-TR07-03"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\65 ALS Removal S-TR08-01.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\65 ALS Removal S-TR08-01.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\65 ALS Removal S-TR08-01"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\66 ALS Removal S-TR11-02.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\66 ALS Removal S-TR11-02.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\66 ALS Removal S-TR11-02"),
-    #     r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\67 ALS Removal S-TR12-01.NLA": (
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\67 ALS Removal S-TR12-01.st7",
-    #         r"E:\Projects\Changi\MUC\Strand7 Model\V1_4_5\ALS\Principal Axes Parquet\67 ALS Removal S-TR12-01")}
-    #
-    # p = "Something"
-    #
-    # for k, v in nla_dict.items():
-    #     if not os.path.exists(v[1]):
-    #         os.mkdir(v[1])
-    #     extract_model_data(v[0], k, p, scratch_path=scratch_folder, parquet=parquet, directory=pathlib.Path(v[1]))
-    #     time.sleep(1)
 
 

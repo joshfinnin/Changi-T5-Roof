@@ -37,7 +37,7 @@ if __name__ == '__main__':
     # ESTABLISH CONNECTION WITH DATABASE FILES
     # ----------------------------------------------------------------------
 
-    # Envelope query called on the combined SQLite connection
+    # Envelope column_query called on the combined SQLite connection
     envelope_query = f"""WITH ABS_ENV AS (
     SELECT
     BF.BeamNumber,
@@ -203,7 +203,7 @@ if __name__ == '__main__':
 
         cursor = connection.cursor()
 
-        # Priorize RAM if possible to speed up the query
+        # Priorize RAM if possible to speed up the column_query
         cursor.execute("""PRAGMA temp_store=1;""")
         cursor.execute("PRAGMA cache_size = 100000;")
 
@@ -214,7 +214,7 @@ if __name__ == '__main__':
 
         results = cursor.execute(envelope_query).fetchall()
 
-        # Write the results of the envelope query to a CSV file
+        # Write the results of the envelope column_query to a CSV file
         headers = ["BeamNumber", "GroupName", "PropertyName", "Fx", "Fy", "Fz", "Mx", "My", "Mz"]
         writer = csv.writer(out_file)
         writer.writerow(headers)

@@ -30,11 +30,11 @@ def process_time(func):
 def get_perm_beam_end_query(location: str, bp_parq_file: str, node_dict: dict, target_groups: str,
                             excluded_beams: dict) -> str:
     """Gets the SQL write_full_beam_forces_query for finding the relevant ends of the beam.
-    Have updated the query to only pull the properties from a single model."""
+    Have updated the column_query to only pull the properties from a single model."""
 
     nodes = node_dict[location]
 
-    # This query needs to be updated
+    # This column_query needs to be updated
     beam_end_query = f"""
     SELECT BeamNumber,
     0.0 AS BeamEnd,
@@ -72,7 +72,7 @@ def get_full_beam_force_query(bf_perm_parq_files: dict, bf_als_parq_files: dict,
                               beam_numbers: tuple, target_groups: str, result_case_filter: str, als_only=False) -> str:
     """Gets the full set of beam forces for beams from the series of bf_parqs, using filtering criteria."""
 
-    # First query the permanent models for the end forces that occur for our target beams
+    # First column_query the permanent models for the end forces that occur for our target beams
     perm_prequery = "\n UNION ALL ".join(f"SELECT "
                                     f"BeamNumber, ResultCaseName, ResultCase, Position, '{model_name}' AS Model, "
                                     f"Fx, Fy, Fz, Mx, My, Mz FROM '{bf_perm_parq_file}' "
@@ -80,7 +80,7 @@ def get_full_beam_force_query(bf_perm_parq_files: dict, bf_als_parq_files: dict,
                                     f"AND BeamNumber IN {beam_numbers}" for model_name,
                                     bf_perm_parq_file in bf_perm_parq_files.items())
 
-    # Second query the als models for the end forces that occur for our target beams
+    # Second column_query the als models for the end forces that occur for our target beams
     # (based on BeamID rather than on BeamNumber)
     als_prequery = "\n UNION ALL ".join(f"""SELECT
                                             BeamIDNumber AS BeamNumber, ResultCaseName, ResultCase, Position, 
@@ -92,7 +92,7 @@ def get_full_beam_force_query(bf_perm_parq_files: dict, bf_als_parq_files: dict,
                                             AND BeamIDNumber IN {beam_numbers}""" for model_name,
                                             bf_als_parq_file in bf_als_parq_files.items())
 
-    # Added in this logic to ensure that we can query only the ALS models if we want to, but for the elements
+    # Added in this logic to ensure that we can column_query only the ALS models if we want to, but for the elements
     # that occur in the permanent model at the location we identify
     if als_only:
         prequery = als_prequery

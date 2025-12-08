@@ -83,7 +83,7 @@ if __name__ == '__main__':
 
         conn.execute(query)
 
-        # Execute query to write permanent results to parquet file
+        # Execute column_query to write permanent results to parquet file
         query = f"""CREATE TABLE PERM AS WITH
                 BEAM_END_FORCES AS ({get_perm_beam_end_force_query(perm_forces_parq_dict)})
                 SELECT * FROM BEAM_END_FORCES
@@ -102,7 +102,7 @@ if __name__ == '__main__':
 
         for als_model in als_models:
 
-            # Execute query to write ALS results to parquet files
+            # Execute column_query to write ALS results to parquet files
             query = f"""COPY(WITH INITIAL_ALS_RESULTS AS ({get_initial_als_end_forces(als_force_parq_dict[als_model], als_prop_parq_dict[als_model], permanent_beam_numbers)}),
                         ALS_BEAM_FORCES AS ({get_als_end_forces(als_model)})
                         SELECT BeamNumber,

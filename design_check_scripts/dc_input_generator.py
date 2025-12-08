@@ -107,7 +107,7 @@ if __name__ == '__main__':
     ENVELOPE = True
 
     # The below group filter determines which group of elements to filter by from the Strand7 model
-    GROUP_FILTER = "BracingPlanBot"
+    GROUP_FILTER = "EdgeTrussTop"
 
     # Effective length input file, generated using the
     # effective_length_initializer.py module
