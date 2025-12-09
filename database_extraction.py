@@ -165,7 +165,10 @@ SCHEMAS = {"BeamForces": _BEAM_FORCE_SCHEMA,
 
 class ModelContext:
     """Class to encapsulate information about the model required for the extraction functions."""
-    def __init__(self, uID, load_cases: int, primary_combo_count: int, secondary_combo_count: int):
+    def __init__(self, model_name: str, result_file: str, uID: int, load_cases: int,
+                 primary_combo_count: int, secondary_combo_count: int):
+        self.model_name = model_name
+        self.result_file = result_file
         self.uID = uID
         self.load_cases = load_cases
         self.primary_combo_count = primary_combo_count
