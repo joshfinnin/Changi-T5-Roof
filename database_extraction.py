@@ -17,7 +17,6 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import pathlib
 from getpass import getuser
-import logging
 import St7API as St7
 from St7API import kMaxStrLen
 
