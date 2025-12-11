@@ -1,24 +1,53 @@
 
 """
-database_extractor.py
+database_extraction.py
 
-Module to extract the analysis results from a Strand7 model into a SQLite database or Parquet files.
+Module to extract the analysis results from a Strand7 model into a series of Parquet files.
 """
 
-__version__ = "1.2.4"
+__version__ = "1.4.0"
+
 
 import ctypes
-from sqlite3 import Connection, Cursor, connect
-
-import pyarrow as pa
-import pyarrow.parquet as pq
-import os
-import tkinter as tk
-from tkinter import filedialog, messagebox
 import pathlib
 from getpass import getuser
+from dataclasses import dataclass
+from enum import Enum
+import logging
+from typing import Callable, Iterable
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import pyarrow as pa
+import pyarrow.parquet as pq
 import St7API as St7
 from St7API import kMaxStrLen
+
+
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+logger = logging.getLogger(__name__)
+
+@dataclass(slots=True)
+class ModelExtractionContext:
+    """Class to encapsulate information about the model required for the extraction functions."""
+    model_name: pathlib.Path
+    result_file: pathlib.Path
+    uID: ctypes.c_int
+    load_cases: ctypes.c_int
+    primary_combo_count: ctypes.c_int
+    secondary_combo_count: ctypes.c_int
+    directory: pathlib.Path
+
+
+@dataclass(slots=True)
+class ParquetSettings:
+    label: str
+    file_name: str
+    schema: pa.Schema
+    extractor: Callable[[ModelExtractionContext, "ParquetSettings"], Iterable]
+    position_values: tuple = (0.0, 0.25, 0.5, 0.75, 1.0)
+
 
 _PLATE_LOCAL_STRESS_SCHEMA = pa.schema([("Sxx", pa.float64()),
                                         ("Syy", pa.float64()),
@@ -52,13 +81,28 @@ _PLATE_PROPERTIES_SCHEMA = pa.schema([("PlateNumber", pa.int32()),
 _PLATE_LOADING_SCHEMA = pa.schema([("PlateNumber", pa.int32()),
                                    ("LoadCase", pa.int32()),
                                    ("LoadCaseName", pa.string()),
-                                   ("NormalZPosPressure", pa.float64()),
                                    ("NormalZNegPressure", pa.float64()),
-                                   ("GlobalXPressure", pa.float64()),
-                                   ("GlobalYPressure", pa.float64()),
-                                   ("GlobalZPressure", pa.float64()),
+                                   ("NormalZPosPressure", pa.float64()),
+                                   ("GlobalXNegPressure", pa.float64()),
+                                   ("GlobalYNegPressure", pa.float64()),
+                                   ("GlobalZNegPressure", pa.float64()),
+                                   ("GlobalNegProjection", pa.string()),
+                                   ("GlobalXPosPressure", pa.float64()),
+                                   ("GlobalYPosPressure", pa.float64()),
+                                   ("GlobalZPosPressure", pa.float64()),
+                                   ("GlobalPosProjection", pa.string()),
                                    ("ShearXLocPressure", pa.float64()),
                                    ("ShearYLocPressure", pa.float64())])
+
+_PLATE_NON_STRUCTURAL_MASS_SCHEMA = pa.schema([("LoadEntryID", pa.string()),
+                                               ("PlateNumber", pa.int32()),
+                                               ("LoadCase", pa.int32()),
+                                               ("LoadCaseName", pa.string()),
+                                               ("NSMass", pa.float64()),
+                                               ("DynamicFactor", pa.float64()),
+                                               ("OffsetVecX", pa.float64()),
+                                               ("OffsetVecY", pa.float64()),
+                                               ("OffsetVecZ", pa.float64())])
 
 _BEAM_FORCE_SCHEMA = pa.schema([
     ("ResultId", pa.string()),
@@ -102,17 +146,49 @@ _BEAM_PROPERTIES_SCHEMA = pa.schema([
     ("Dir3_Z", pa.float64())
 ])
 
-# WIP SCHEMA FOR BEAM LOADING - LOAD IDS MAKE THIS DIFFICULT
-_BEAM_LOADING_SCHEMA = pa.schema([("BeamNumber", pa.int32()),
-                                  ("LoadCase", pa.int32()),
-                                  ("LoadCaseName", pa.string()),
-                                  ("PrincXDist", pa.float64()),
-                                  ("PrincYDist", pa.float64()),
-                                  ("PrincZDist", pa.float64()),
-                                  ("GlobXDist", pa.float64()),
-                                  ("GlobYDist", pa.float64()),
-                                  ("GlobZDist", pa.float64()),
-                                  ("PrincXPoint", pa.float64())])
+_BEAM_DISTRIBUTED_LOADING_SCHEMA = pa.schema([("LoadEntryID", pa.string()),
+                                              ("LoadAxesType", pa.string()),
+                                              ("BeamNumber", pa.int32()),
+                                              ("LoadCase", pa.int32()),
+                                              ("LoadCaseName", pa.string()),
+                                              ("Axis", pa.int32()),
+                                              ("LoadIDNumber", pa.int32()),
+                                              ("LoadType", pa.string()),
+                                              ("Projected", pa.bool8()),
+                                              ("PA", pa.float64()),
+                                              ("PB", pa.float64()),
+                                              ("P1", pa.float64()),
+                                              ("P2", pa.float64()),
+                                              ("a", pa.float64()),
+                                              ("b", pa.float64())])
+
+_BEAM_NON_STRUCTURAL_MASS_SCHEMA = pa.schema([("LoadEntryID", pa.string()),
+                                              ("BeamNumber", pa.int32()),
+                                              ("LoadCase", pa.int32()),
+                                              ("LoadCaseName", pa.string()),
+                                              ("LoadIDNumber", pa.int32()),
+                                              ("LoadType", pa.string()),
+                                              ("PA", pa.float64()),
+                                              ("PB", pa.float64()),
+                                              ("P1", pa.float64()),
+                                              ("P2", pa.float64()),
+                                              ("a", pa.float64()),
+                                              ("b", pa.float64()),
+                                              ("DynamicFactor", pa.float64()),
+                                              ("OffsetVecX", pa.float64()),
+                                              ("OffsetVecY", pa.float64()),
+                                              ("OffsetVecZ", pa.float64())])
+
+_BEAM_POINT_LOADING_SCHEMA = pa.schema([("LoadEntryID", pa.string()),
+                                        ("LoadAxesType", pa.string()),
+                                        ("BeamNumber", pa.int32()),
+                                        ("LoadCase", pa.int32()),
+                                        ("LoadCaseName", pa.string()),
+                                        ("LoadIDNumber", pa.int32()),
+                                        ("Position", pa.float64()),
+                                        ("PointLoadX", pa.float64()),
+                                        ("PointLoadY", pa.float64()),
+                                        ("PointLoadZ", pa.float64())])
 
 _NODAL_REACTIONS_SCHEMA = pa.schema([
     ("ResultId", pa.string()),
@@ -147,697 +223,101 @@ _NODAL_COORDINATES_SCHEMA = pa.schema([
     ("Z", pa.float64())
 ])
 
-# WIP SCHEMA FOR NODAL LOADING - LOAD IDS MAKE THIS DIFFICULT
-_NODAL_LOADING_SCHEMA = pa.schema([])
+_NODAL_LOADING_SCHEMA = pa.schema([("LoadEntryID", pa.string()),
+                                   ("NodeNumber", pa.int32()),
+                                   ("LoadCase", pa.int32()),
+                                   ("LoadCaseName", pa.string()),
+                                   ("Px", pa.float64()),
+                                   ("Py", pa.float64()),
+                                   ("Pz", pa.float64())])
 
-SCHEMAS = {"BeamForces": _BEAM_FORCE_SCHEMA,
-           "BeamDisplacements": _BEAM_DISPLACEMENT_SCHEMA,
-           "BeamProperties": _BEAM_PROPERTIES_SCHEMA,
-           "NodalReactions": _NODAL_REACTIONS_SCHEMA,
-           "NodalDisplacements": _NODAL_DISPLACEMENTS_SCHEMA,
-           "NodalCoordinates": _NODAL_COORDINATES_SCHEMA,
-           "PlateLocalStresses": _PLATE_LOCAL_STRESS_SCHEMA,
-           "PlateCombinedStresses": _PLATE_DERIVED_STRESS_SCHEMA,
-           "PlateProperties": _PLATE_PROPERTIES_SCHEMA,
-           "PlateLoading": _PLATE_LOADING_SCHEMA}
+def _check_St7_error_message(err_code: int):
+    if err_code == 0:
+        return
 
-
-class ModelContext:
-    """Class to encapsulate information about the model required for the extraction functions."""
-    def __init__(self, model_name: str, result_file: str, uID: int, load_cases: int,
-                 primary_combo_count: int, secondary_combo_count: int):
-        self.model_name = model_name
-        self.result_file = result_file
-        self.uID = uID
-        self.load_cases = load_cases
-        self.primary_combo_count = primary_combo_count
-        self.secondary_combo_count = secondary_combo_count
-
-
-def _log_error_message(err_code: int):
     message = ctypes.create_string_buffer(kMaxStrLen)
     St7.St7GetAPIErrorString(err_code, message, St7.kMaxStrLen)
-    print(message.value.decode())
+    if err_code in (10, 118):
+        logger.warning(f"{err_code}: {message.value.decode()}")
+        return
 
-def _clear_lists(lists_to_clear: tuple):
+    else:
+        logger.error(f"{err_code}: {message.value.decode()}")
+        raise RuntimeError(message.value.decode())
+
+def _clear_lists(lists_to_clear: list):
     """Convenience function for clearing lists."""
     for lst in lists_to_clear:
         lst.clear()
 
-def _create_parq_table(writer: pq.ParquetWriter, lists_to_process: tuple, schema: pa.Schema):
+def _create_parq_table(writer: pq.ParquetWriter, lists_to_process: list, schema: pa.Schema):
     array = list(pa.array(data) for data in lists_to_process)
     table = pa.Table.from_arrays(array, schema=schema)
     writer.write_table(table)
     _clear_lists(lists_to_process)
 
-# Function to create a database and table
-def create_sqlite_database(conn: Connection, cursor: Cursor):
-
-    # Create table for node reactions
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS NodalReactions (
-            ResultId TEXT PRIMARY KEY,
-            NodeNumber INTEGER,
-            ResultCase INTEGER,
-            ResultCaseName TEXT,
-            ReactionX REAL,
-            ReactionY REAL,
-            ReactionZ REAL,
-            ReactionXX REAL,
-            ReactionYY REAL,
-            ReactionZZ REAL
-        )
-    ''')
-
-    cursor.execute("""CREATE INDEX idx_node_reactions_nodenumber_resultcase_resultcasename ON NodalReactions(NodeNumber, ResultCase, ResultCaseName);""")
-
-    # Create table for node displacements
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS NodalDisplacements (
-            ResultId TEXT PRIMARY KEY,
-            NodeNumber INTEGER,
-            ResultCase INTEGER,
-            ResultCaseName TEXT,
-            DisplacementX REAL,
-            DisplacementY REAL,
-            DisplacementZ REAL,
-            RotationXX REAL,
-            RotationYY REAL,
-            RotationZZ REAL
-        )
-    ''')
-
-    cursor.execute("""CREATE INDEX idx_node_displacements_nodenumber_resultcase_resultcasename ON NodalDisplacements(NodeNumber, ResultCase, ResultCaseName);""")
-
-    # Create table for nodal coordinates
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS NodalCoordinates (
-            NodeNumber INTEGER PRIMARY KEY,
-            X REAL,
-            Y REAL,
-            Z REAL
-        )
-    ''')
-
-    # Create table for element attributes
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS BeamProperties (
-            BeamNumber INTEGER PRIMARY KEY,
-            N1 INTEGER,
-            N2 INTEGER,
-            Length REAL,
-            PropertyName TEXT,
-            GroupName TEXT,
-            BeamIDNumber INTEGER
-        )
-    ''')
-
-    cursor.execute("""CREATE INDEX idx_beam_attributes_propertyname ON BeamProperties(PropertyName, GroupName, BeamIDNumber);""")
-
-    # Create table for element forces
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS BeamForces (
-            ResultId TEXT PRIMARY KEY,
-            BeamNumber INTEGER,
-            ResultCase INTEGER,
-            ResultCaseName TEXT,
-            Position REAL,
-            Fx REAL,
-            Fy REAL,
-            Fz REAL,
-            Mx REAL,
-            My REAL,
-            Mz REAL
-        )
-    ''')
-
-    cursor.execute("""CREATE INDEX idx_beam_forces_beamnumber_resultcase_resultcasename_propertyname ON BeamForces(BeamNumber, ResultCase, ResultCaseName);""")
-
-    # Create table for element displacements
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS BeamDisplacements (
-            ResultId TEXT PRIMARY KEY,
-            BeamNumber INTEGER,
-            ResultCase INTEGER,
-            ResultCaseName TEXT,
-            Position REAL,
-            Dx REAL,
-            Dy REAL,
-            Dz REAL,
-            Rx REAL,
-            Ry REAL,
-            Rz REAL
-        )
-    ''')
-
-    cursor.execute("""CREATE INDEX idx_beam_displacements_beamnumber_resultcase_resultcasename_propertyname ON BeamDisplacements(BeamNumber, ResultCase, ResultCaseName);""")
-
-    conn.commit()
-
-
-# Function to insert nodal reactions into the database
-def sql_insert_nodal_reactions(conn: Connection, cursor: Cursor, uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
-                               secondary_combo_count: ctypes.c_int):
-
-    nodal_reactions = []
-
-    insertion_query = """
-            INSERT INTO NodalReactions (ResultId, NodeNumber, ResultCase, ResultCaseName, ReactionX, ReactionY, ReactionZ, ReactionXX, ReactionYY, ReactionZZ)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
-
-    for result in extract_nodal_reactions(uID, primary_combo_count=primary_combo_count,
-                                          secondary_combo_count=secondary_combo_count):
-        nodal_reactions.append(result)
-
-        if len(nodal_reactions) % 50_000 == 0:
-            cursor.executemany(insertion_query, nodal_reactions)
-            nodal_reactions.clear()
-
-    cursor.executemany(insertion_query, nodal_reactions)
-    nodal_reactions.clear()
-
-    conn.commit()
-
-    print("Nodal reactions written to DB.")
-
-
-# Function to insert nodal displacements into the database
-def sql_insert_nodal_displacements(conn: Connection, cursor: Cursor, uID: ctypes.c_int,
-                                   primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int):
-
-    insertion_query = """
-        INSERT INTO NodalDisplacements (ResultId, NodeNumber, ResultCase, ResultCaseName, DisplacementX, DisplacementY, DisplacementZ, RotationXX, RotationYY, RotationZZ)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
-
-    nodal_displacements = []
-
-    for result in extract_nodal_displacements(uID, primary_combo_count, secondary_combo_count):
-
-        nodal_displacements.append(result)
-
-        if len(nodal_displacements) % 50_000 == 0:
-            cursor.executemany(insertion_query, nodal_displacements)
-            nodal_displacements.clear()
-
-    cursor.executemany(insertion_query, nodal_displacements)
-    nodal_displacements.clear()
-
-    conn.commit()
-    print("Nodal displacements written to the DB.")
-
-
-# Function to insert nodal coordinates into the database
-def sql_insert_nodal_coordinates(conn: Connection, cursor: Cursor, uID: ctypes.c_int):
-
-    nodal_coordinates = []
-
-    insertion_query = """INSERT INTO NodalCoordinates (NodeNumber, X, Y, Z)
-    VALUES (?, ?, ?, ?)"""
-
-    for result in extract_nodal_coordinates(uID):
-        nodal_coordinates.append(result)
-
-        # Write out the results every 50_000 results or so
-        if len(nodal_coordinates) % 50_000 == 0:
-            cursor.executemany(insertion_query, nodal_coordinates)
-            nodal_coordinates.clear()
-
-    cursor.executemany(insertion_query, nodal_coordinates)
-    nodal_coordinates.clear()
-
-    conn.commit()
-
-    print("Nodal coordinates written to DB.")
-
-
-# Function to insert element properties into the database
-def sql_insert_beam_properties(conn: Connection, cursor: Cursor, uID: ctypes.c_int):
-
-    beam_properties = []
-
-    insertion_query = """INSERT INTO BeamProperties (BeamNumber, N1, N2, Length, PropertyName, GroupName, BeamIDNumber)
-    VALUES (?, ?, ?, ?, ?, ?, ?)"""
-
-    for result in extract_beam_properties(uID):
-
-        beam_properties.append(result)
-
-        # Write out the results every 50_000 results or so
-        if len(beam_properties) % 50_000 == 0:
-            cursor.executemany(insertion_query, beam_properties)
-            beam_properties.clear()
-
-    cursor.executemany(insertion_query, beam_properties)
-    beam_properties.clear()
-
-    conn.commit()
-
-    print("Beam attributes and properties written to DB.")
-
-
-# Function to insert element forces into the database
-def sql_insert_beam_forces(conn: Connection, cursor: Cursor, uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
-                           secondary_combo_count: ctypes.c_int):
-    beam_results = []
-
-    insertion_query = """INSERT INTO BeamForces (ResultId, BeamNumber, ResultCase, ResultCaseName, Position, Fx, Fy, Fz, Mx, My, Mz)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
-
-    for result in extract_beam_forces(uID, primary_combo_count, secondary_combo_count):
-
-        beam_results.append(result)
-
-        # Write out the results every 50_000 results or so
-        if len(beam_results) % 50_000 == 0:
-            cursor.executemany(insertion_query, beam_results)
-            beam_results.clear()
-
-    # Final executemany call outside the loop to insert any residual results
-    cursor.executemany(insertion_query, beam_results)
-    beam_results.clear()
-
-    conn.commit()
-
-    print("Beam force results written to DB.")
-
-
-# Function to insert element displacements into the database
-def sql_insert_beam_displacements(conn: Connection, cursor: Cursor, beam_results: list):
-
-    insertion_query = """INSERT INTO BeamDisplacements (ResultId, BeamNumber, ResultCase, ResultCaseName, Position, Dx, Dy, Dz, Rx, Ry, Rz)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
-
-    cursor.executemany(insertion_query, beam_results)
-
-    conn.commit()
-
-
-def parquet_insert_nodal_coordinates(uID: ctypes.c_int, directory: pathlib.Path):
-
-    node_numbers = []
-    x_coords = []
-    y_coords = []
-    z_coords = []
-
-    lists_to_process = (node_numbers, x_coords, y_coords, z_coords)
-
-    counter = 0
-
-    with pq.ParquetWriter(directory / "nodal_coordinates.parquet", schema=SCHEMAS["NodalCoordinates"]) as writer:
-        for r in extract_nodal_coordinates(uID):
-            node_numbers.append(r[0])
-            x_coords.append(r[1])
-            y_coords.append(r[2])
-            z_coords.append(r[3])
-
-            counter += 1
-
-            if counter % 50_000 == 0:
-                _create_parq_table(writer, lists_to_process, SCHEMAS["NodalCoordinates"])
-
-        _create_parq_table(writer, lists_to_process, SCHEMAS["NodalCoordinates"])
-
-    print("Nodal coordinates written to DB.")
-
-
-def parquet_insert_nodal_reactions(uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
-                                   secondary_combo_count: ctypes.c_int, directory: pathlib.Path):
-
-    result_ids = []
-    node_numbers = []
-    case_numbers = []
-    case_names = []
-    rxs = []
-    rys = []
-    rzs = []
-    rxxs = []
-    ryys = []
-    rzzs = []
-
-    lists_to_process = (result_ids, node_numbers, case_numbers, case_names, rxs, rys, rzs, rxxs, ryys, rzzs)
-
-    with pq.ParquetWriter(directory / "nodal_reactions.parquet", schema=SCHEMAS["NodalReactions"]) as writer:
-
-        counter = 0
-
-        for r in extract_nodal_reactions(uID, primary_combo_count=primary_combo_count,
-                                         secondary_combo_count=secondary_combo_count):
-            result_ids.append(r[0])
-            node_numbers.append(r[1])
-            case_numbers.append(r[2])
-            case_names.append(r[3])
-            rxs.append(r[4])
-            rys.append(r[5])
-            rzs.append(r[6])
-            rxxs.append(r[7])
-            ryys.append(r[8])
-            rzzs.append(r[9])
-
-            counter += 1
-
-            if counter % 50_000 == 0:
-                _create_parq_table(writer, lists_to_process, SCHEMAS["NodalReactions"])
-
-        _create_parq_table(writer, lists_to_process, SCHEMAS["NodalReactions"])
-
-        print("Nodal reactions written to DB.")
-
-
-def parquet_insert_nodal_displacements(uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
-                                       secondary_combo_count: ctypes.c_int, directory: pathlib.Path):
-
-    result_ids = []
-    node_numbers = []
-    case_numbers = []
-    case_names = []
-    dxs = []
-    dys = []
-    dzs = []
-    dxxs = []
-    dyys = []
-    dzzs = []
-
-    lists_to_process = (result_ids, node_numbers, case_numbers, case_names, dxs, dys, dzs, dxxs, dyys, dzzs)
-
-    count = 0
-
-    with pq.ParquetWriter(directory / "nodal_displacements.parquet", schema=SCHEMAS["NodalDisplacements"]) as writer:
-
-        for r in extract_nodal_displacements(uID, primary_combo_count, secondary_combo_count):
-
-            result_ids.append(r[0])
-            node_numbers.append(r[1])
-            case_numbers.append(r[2])
-            case_names.append(r[3])
-            dxs.append(r[4])
-            dys.append(r[5])
-            dzs.append(r[6])
-            dxxs.append(r[7])
-            dyys.append(r[8])
-            dzzs.append(r[9])
-
-            count += 1
-
-            if count % 50_000 == 0:
-                _create_parq_table(writer, lists_to_process, SCHEMAS["NodalDisplacements"])
-
-        _create_parq_table(writer, lists_to_process, SCHEMAS["NodalDisplacements"])
-
-    print("Nodal displacements written to DB.")
-
-
-def parquet_insert_beam_properties(uID: ctypes.c_int, directory: pathlib.Path):
-    """
-    Function for creating the parquet cruciform_output_file for beam properties.
-    :param uID:
-    :param directory:
-    :return:
-    """
-
-    beam_numbers = []
-    n1s = []
-    n2s = []
-    lengths = []
-    property_names = []
-    group_names = []
-    beam_id_numbers = []
-    dir1_xs = []
-    dir1_ys = []
-    dir1_zs = []
-    dir2_xs = []
-    dir2_ys = []
-    dir2_zs = []
-    dir3_xs = []
-    dir3_ys = []
-    dir3_zs = []
-
-    lists_to_process = (beam_numbers, n1s, n2s, lengths, property_names, group_names, beam_id_numbers,
-                        dir1_xs, dir1_ys, dir1_zs, dir2_xs, dir2_ys, dir2_zs, dir3_xs, dir3_ys, dir3_zs)
-
-    with pq.ParquetWriter(directory / "beam_properties.parquet", SCHEMAS["BeamProperties"]) as writer:
-
-        counter = 0
-
-        for r in extract_beam_properties(uID):
-            beam_numbers.append(r[0])
-            n1s.append(r[1])
-            n2s.append(r[2])
-            lengths.append(r[3])
-            property_names.append(r[4])  # Can I just get rid of the string casting that I did above?
-            group_names.append(r[5])
-            beam_id_numbers.append(r[6])
-            dir1_xs.append(r[7])
-            dir1_ys.append(r[8])
-            dir1_zs.append(r[9])
-            dir2_xs.append(r[10])
-            dir2_ys.append(r[11])
-            dir2_zs.append(r[12])
-            dir3_xs.append(r[13])
-            dir3_ys.append(r[14])
-            dir3_zs.append(r[15])
-            counter += 1
-            if counter % 50_000 == 0:
-                _create_parq_table(writer, lists_to_process, SCHEMAS["BeamProperties"])
-
-        # We write one last time for any remaining data in the lists
-        _create_parq_table(writer, lists_to_process, SCHEMAS["BeamProperties"])
-
-    print("Beam attributes and properties written to DB.")
-
-
-def parquet_insert_beam_forces(uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
-                               secondary_combo_count: ctypes.c_int, directory: pathlib.Path):
-    """
-    """
-
-    result_ids = []
-    beam_numbers = []
-    case_numbers = []
-    case_names = []
-    position_results = []
-    fxs = []
-    fys = []
-    fzs = []
-    mxs = []
-    mys = []
-    mzs = []
-
-    lists_to_process = (result_ids, beam_numbers, case_numbers, case_names, position_results, fxs, fys, fzs, mxs, mys, mzs)
-
-    with pq.ParquetWriter(directory / "beam_forces.parquet", SCHEMAS["BeamForces"]) as writer:
-
-        counter = 0
-
-        for r in extract_beam_forces(uID, primary_combo_count, secondary_combo_count):
-            result_ids.append(r[0])
-            beam_numbers.append(r[1])
-            case_numbers.append(r[2])
-            case_names.append(r[3])
-            position_results.append(r[4])  # Can I just get rid of the string casting that I did above?
-            fxs.append(r[5])
-            fys.append(r[6])
-            fzs.append(r[7])
-            mxs.append(r[8])
-            mys.append(r[9])
-            mzs.append(r[10])
-            counter += 1
-            if counter % 50_000 == 0:
-                _create_parq_table(writer, lists_to_process, SCHEMAS["BeamForces"])
-
-        # We write one last time for any remaining data in the lists
-        _create_parq_table(writer, lists_to_process, SCHEMAS["BeamForces"])
-
-    print("Beam force results written to DB.")
-
-def parquet_insert_beam_displacements(uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
-                                      secondary_combo_count: ctypes.c_int, directory: pathlib.Path):
-    result_ids = []
-    beam_numbers = []
-    case_numbers = []
-    case_names = []
-    position_results = []
-    uxs = []
-    uys = []
-    uzs = []
-
-    lists_to_process = (result_ids, beam_numbers, case_numbers, case_names, position_results, uxs, uys, uzs)
-
-    with pq.ParquetWriter(directory / "beam_displacements.parquet", SCHEMAS["BeamDisplacements"]) as writer:
-
-        counter = 0
-
-        for r in extract_beam_displacements(uID, primary_combo_count, secondary_combo_count):
-            result_ids.append(r[0])
-            beam_numbers.append(r[1])
-            case_numbers.append(r[2])
-            case_names.append(r[3])
-            position_results.append(r[4])
-            uxs.append(r[5])
-            uys.append(r[6])
-            uzs.append(r[7])
-            counter += 1
-
-            if counter % 50_000 == 0:
-                _create_parq_table(writer, lists_to_process, SCHEMAS["BeamDisplacements"])
-
-        _create_parq_table(writer, lists_to_process, SCHEMAS["BeamDisplacements"])
-
-    print("Beam displacements written to DB.")
-
-def parquet_insert_plate_properties(uID: ctypes.c_int, directory: pathlib.Path):
-
-    plate_numbers = []
-    n1s = []
-    n2s = []
-    n3s = []
-    n4s = []
-    areas = []
-    property_names = []
-    property_types = []
-    element_types = []
-    group_names = []
-    plate_id_numbers = []
-
-    lists_to_process = (plate_numbers, property_names, property_types, element_types, group_names, plate_id_numbers,
-                        areas, n1s, n2s, n3s, n4s)
-
-    with pq.ParquetWriter(directory / "plate_properties.parquet", SCHEMAS["PlateProperties"]) as writer:
-
-        counter = 0
-
-        for r in extract_plate_properties(uID):
-            plate_numbers.append(r[0])
-            n1s.append(r[1])
-            n2s.append(r[2])
-            n3s.append(r[3])
-            n4s.append(r[4])
-            if r[4] != 0:
-                element_types.append("QUAD")
-            else:
-                element_types.append("TRI")
-            areas.append(r[5])
-            property_names.append(r[6])
-            property_types.append(r[7])
-            group_names.append(r[8])
-            plate_id_numbers.append(r[9])
-
-            counter += 1
-            if counter % 50_000 == 0:
-                _create_parq_table(writer, lists_to_process, SCHEMAS["PlateProperties"])
-
-        _create_parq_table(writer, lists_to_process, SCHEMAS["PlateProperties"])
-
-    print("Plate attributes and properties written to DB.")
-
-
-def parquet_insert_plate_loading(uID: ctypes.c_int, load_case_count: ctypes.c_int, directory: pathlib.Path):
-
-    plate_numbers = []
-    case_numbers = []
-    case_names = []
-    norm_neg_pressures = []
-    norm_pos_pressures = []
-    glob_neg_x_pressures = []
-    glob_neg_y_pressures = []
-    glob_neg_z_pressures = []
-    glob_pos_x_pressures = []
-    glob_pos_y_pressures = []
-    glob_pos_z_pressures = []
-    shear_stress_xs = []
-    shear_stress_ys = []
-
-    lists_to_process = (plate_numbers, case_numbers, case_names,
-                        norm_neg_pressures, norm_pos_pressures,
-                        glob_neg_x_pressures, glob_neg_y_pressures, glob_neg_z_pressures,
-                        glob_pos_x_pressures, glob_pos_y_pressures, glob_pos_z_pressures,
-                        shear_stress_xs, shear_stress_ys)
-
-    with pq.ParquetWriter(directory / "plate_loading.parquet", SCHEMAS["PlateLoading"]) as writer:
-
-        counter = 0
-
-        for r in extract_plate_loading(uID, load_case_count):
-            plate_numbers.append(r[0])
-            case_numbers.append(r[1])
-            case_names.append(r[2])
-            norm_neg_pressures.append(r[3])
-            norm_pos_pressures.append(r[4])
-            glob_neg_x_pressures.append(r[5])
-            glob_neg_y_pressures.append(r[6])
-            glob_neg_z_pressures.append(r[7])
-            glob_pos_x_pressures.append(r[8])
-            glob_pos_y_pressures.append(r[9])
-            glob_pos_z_pressures.append(r[10])
-            shear_stress_xs.append(r[11])
-            shear_stress_ys.append(r[12])
-
-            counter += 1
-            if counter % 50_000 == 0:
-                _create_parq_table(writer, lists_to_process, SCHEMAS["PlateLoading"])
-
-        _create_parq_table(writer, lists_to_process, SCHEMAS["PlateLoading"])
-
-    print("Plate loading written to DB.")
-
-
-def parquet_insert_plate_local_stresses(uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
-                                        secondary_combo_count: ctypes.c_int, directory: pathlib.Path):
-    pass
-
-
-def parquet_insert_plate_combined_stresses(uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
-                                           secondary_combo_count: ctypes.c_int, directory: pathlib.Path):
-    pass
-
 
 # Initialize Strand7 model
-def initialize_model(model_file: str, result_file: str, scratch_path: str):
+def initialize_model(model_file: pathlib.Path, result_file: pathlib.Path, scratch_path: pathlib.Path):
     uID = ctypes.c_int(1)  # Unique identifier for the model
-    _log_error_message(St7.St7Init())
+    _check_St7_error_message(St7.St7Init())
     p_combo_count = ctypes.c_int(0)
     s_combo_count = ctypes.c_int(0)
     try:  # This try block is essential for avoiding getting stuck if the API call fails
-        _log_error_message(St7.St7OpenFile(uID, model_file.encode('utf-8'), scratch_path.encode('utf-8')))
-        print("Model opened.")
-        _log_error_message(St7.St7OpenResultFile(uID, result_file.encode('utf-8'), None, St7.kUseExistingCombinations,
-                              ctypes.byref(p_combo_count), ctypes.byref(s_combo_count)))
-        print("Results accessed.")
-        print(f"Primary combinations found: {p_combo_count.value}")
-        print(f"Secondary combinations found: {s_combo_count.value}")
+        _check_St7_error_message(St7.St7OpenFile(uID, model_file.__str__().encode('utf-8'), scratch_path.__str__().encode('utf-8')))
+        logger.info("Model opened.")
+        _check_St7_error_message(St7.St7OpenResultFile(uID, result_file.__str__().encode('utf-8'), None, St7.kUseExistingCombinations,
+                                                       ctypes.byref(p_combo_count), ctypes.byref(s_combo_count)))
+        logger.info("Results accessed.")
+        logger.info(f"Primary combinations found: {p_combo_count.value}")
+        logger.info(f"Secondary combinations found: {s_combo_count.value}")
 
         return uID, p_combo_count, s_combo_count
 
     except ValueError as ve:
+        logger.error(ve)
+        try:
+            St7.St7CloseResultFile(uID)
+            St7.St7CloseFile(uID)
+            St7.St7Release()
+        except Exception as e:
+            logger.error(e)
+            raise RuntimeError("Failed to close Strand7 model and results.")
         raise ValueError(f"A value error occurred. Likely to be caused by the file names used.") from ve
 
     except Exception as e:
+        logger.error(e)
+        try:
+            St7.St7CloseResultFile(uID)
+            St7.St7CloseFile(uID)
+            St7.St7Release()
+        except Exception as e:
+            logger.error(e)
+            raise RuntimeError("Failed to close Strand7 model and results.")
         raise RuntimeError("Failed to initialize Strand7 model and results.") from e
 
 
 # Function to extract nodal reactions
-def extract_nodal_reactions(uID: ctypes.c_int, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int):
+def extract_nodal_reactions(mctx: ModelExtractionContext, pfs: ParquetSettings):
 
     nNodes = ctypes.c_int(0)
-    St7.St7GetTotal(uID, St7.tyNODE, ctypes.byref(nNodes))
+    _check_St7_error_message(St7.St7GetTotal(mctx.uID, St7.tyNODE, ctypes.byref(nNodes)))
 
-    nLoadCases = ctypes.c_int(0)
-    St7.St7GetNumLoadCase(uID, ctypes.byref(nLoadCases))
-
-    number_of_cases = primary_combo_count.value + secondary_combo_count.value
+    number_of_cases = mctx.primary_combo_count.value + mctx.secondary_combo_count.value
     for case_number in range(1, number_of_cases + 1):
 
         case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
-        St7.St7GetResultCaseName(uID, case_number, case_name, St7.kMaxStrLen)
+        _check_St7_error_message(St7.St7GetResultCaseName(mctx.uID, case_number, case_name, St7.kMaxStrLen))
 
         case_name_string = str(case_name.value.decode())
-        print(f"Extracting node reactions for result case {case_name_string}...")
+        logger.info(f"Extracting node reactions for result case {case_name_string}...")
+
+        reaction_array = ctypes.c_double * 6
+        reactions = reaction_array()
 
         for node in range(1, nNodes.value + 1):
 
-            reaction_array = ctypes.c_double * 6
-            reactions = reaction_array()
-
-            St7.St7GetNodeResult(uID, St7.rtNodeReact, node, case_number, reactions)
+            _check_St7_error_message(St7.St7GetNodeResult(mctx.uID, St7.rtNodeReact, node, case_number, reactions))
             result_id = f"{node}-{case_number}"
             fx = float(reactions[0])
             fy = float(reactions[1])
@@ -850,32 +330,28 @@ def extract_nodal_reactions(uID: ctypes.c_int, primary_combo_count: ctypes.c_int
 
             yield result
 
-    print("Nodal reactions written to DB.")
+    logger.info("Nodal reactions written to DB.")
 
 
 # Function to extract nodal displacements
-def extract_nodal_displacements(uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
-                                secondary_combo_count: ctypes.c_int):
+def extract_nodal_displacements(mctx: ModelExtractionContext, pfs: ParquetSettings):
 
     nNodes = ctypes.c_int(0)
-    St7.St7GetTotal(uID, St7.tyNODE, ctypes.byref(nNodes))
+    _check_St7_error_message(St7.St7GetTotal(mctx.uID, St7.tyNODE, ctypes.byref(nNodes)))
 
-    nLoadCases = ctypes.c_int(0)
-    St7.St7GetNumLoadCase(uID, ctypes.byref(nLoadCases))
-
-    number_of_cases = primary_combo_count.value + secondary_combo_count.value
+    number_of_cases = mctx.primary_combo_count.value + mctx.secondary_combo_count.value
     for case_number in range(1, number_of_cases + 1):
 
         case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
-        St7.St7GetResultCaseName(uID, case_number, case_name, St7.kMaxStrLen)
-        print(f"Extracting node displacements for result case {case_name.value.decode()}...")
+        _check_St7_error_message(St7.St7GetResultCaseName(mctx.uID, case_number, case_name, St7.kMaxStrLen))
+        logger.info(f"Extracting node displacements for result case {case_name.value.decode()}...")
 
         for node in range(1, nNodes.value + 1):
 
             displacement_array = ctypes.c_double * 6
             displacements = displacement_array()
 
-            St7.St7GetNodeResult(uID, St7.rtNodeDisp, node, case_number, displacements)
+            _check_St7_error_message(St7.St7GetNodeResult(mctx.uID, St7.rtNodeDisp, node, case_number, displacements))
             result_id = f"{node}-{case_number}"
             dx = displacements[0]
             dy = displacements[1]
@@ -889,18 +365,18 @@ def extract_nodal_displacements(uID: ctypes.c_int, primary_combo_count: ctypes.c
 
 
 # Function to extract nodal coordinates
-def extract_nodal_coordinates(uID: ctypes.c_int):
+def extract_nodal_coordinates(mctx: ModelExtractionContext, pfs: ParquetSettings):
 
     nNodes = ctypes.c_int(0)
-    St7.St7GetTotal(uID, St7.tyNODE, ctypes.byref(nNodes))
+    _check_St7_error_message(St7.St7GetTotal(mctx.uID, St7.tyNODE, ctypes.byref(nNodes)))
 
-    print("Extracting nodal coordinates...")
+    logger.info("Extracting nodal coordinates...")
 
     node_coordinate_array = ctypes.c_double * 3
     node_coordinates = node_coordinate_array()
 
     for node in range(1, nNodes.value + 1):
-        St7.St7GetNodeXYZ(uID, node, node_coordinates)
+        _check_St7_error_message(St7.St7GetNodeXYZ(mctx.uID, node, node_coordinates))
 
         x_coord = node_coordinates[0]
         y_coord = node_coordinates[1]
@@ -911,13 +387,51 @@ def extract_nodal_coordinates(uID: ctypes.c_int):
         yield result
 
 
+# Function to extract the nodal loading
+def extract_nodal_loading(mctx: ModelExtractionContext, pfs: ParquetSettings):
+
+    nNodes = ctypes.c_int(0)
+    _check_St7_error_message(St7.St7GetTotal(mctx.uID, St7.tyNODE, ctypes.byref(nNodes)))
+
+    logger.info("Extracting nodal loading...")
+
+    for node in range(1, nNodes.value + 1):
+
+        node_force_count = ctypes.c_int(0)
+        _check_St7_error_message(St7.St7GetEntityAttributeSequenceCount(mctx.uID, St7.tyNODE, node, St7.aoForce, ctypes.byref(node_force_count)))
+
+        node_force_entity_array = ctypes.c_int * (node_force_count.value * 4)
+        node_force_entities = node_force_entity_array()
+
+        _check_St7_error_message(St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyNODE, node, St7.aoForce, node_force_count, node_force_entities))
+
+        for i in range(node_force_count.value):
+            node_force_array = ctypes.c_double * 3
+            node_forces = node_force_array()
+
+            load_case = node_force_entities[(4 * i) + St7.ipAttrCase]
+            load_case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
+
+            _check_St7_error_message(St7.St7GetLoadCaseName(mctx.uID, load_case, load_case_name, kMaxStrLen))
+            _check_St7_error_message(St7.St7GetNodeForce3(mctx.uID, node, load_case, node_forces))
+
+            px = node_forces[0]
+            py = node_forces[1]
+            pz = node_forces[2]
+            sid = f"{node}-{load_case}"
+
+            result = (sid, node, load_case, load_case_name.value.decode(), px, py, pz)
+
+            yield result
+
+
 # Function to extract beam attributes and properties
-def extract_beam_properties(uID: ctypes.c_int):
+def extract_beam_properties(mctx: ModelExtractionContext, pfs: ParquetSettings):
 
     nBeams = ctypes.c_int(0)
-    St7.St7GetTotal(uID, St7.tyBEAM, ctypes.byref(nBeams))
+    _check_St7_error_message(St7.St7GetTotal(mctx.uID, St7.tyBEAM, ctypes.byref(nBeams)))
 
-    print("Extracting beam attributes and properties...")
+    logger.info("Extracting beam attributes and properties...")
 
     for beam in range(1, nBeams.value + 1):
         # Create an array to store the connection information
@@ -925,35 +439,35 @@ def extract_beam_properties(uID: ctypes.c_int):
         connections = connection_array()
 
         # Access the beam connection information
-        St7.St7GetElementConnection(uID, St7.tyBEAM, beam, connections)
+        _check_St7_error_message(St7.St7GetElementConnection(mctx.uID, St7.tyBEAM, beam, connections))
 
         # Access the beam id information
         id_number = ctypes.c_int(0)
-        St7.St7GetBeamID(uID, beam, id_number)
+        _check_St7_error_message(St7.St7GetBeamID(mctx.uID, beam, id_number))
 
         # Access the property associated with the beam
         property_number = ctypes.c_int(0)
         property_name = ctypes.create_string_buffer(St7.kMaxStrLen)
-        St7.St7GetElementProperty(uID, St7.ptBEAMPROP, beam, ctypes.byref(property_number))
-        St7.St7GetPropertyName(uID, St7.ptBEAMPROP, property_number, property_name, St7.kMaxStrLen)
+        _check_St7_error_message(St7.St7GetElementProperty(mctx.uID, St7.ptBEAMPROP, beam, ctypes.byref(property_number)))
+        _check_St7_error_message(St7.St7GetPropertyName(mctx.uID, St7.ptBEAMPROP, property_number, property_name, St7.kMaxStrLen))
 
         # Access the group associated with the beam
         group_id = ctypes.c_int(0)
         group_name = ctypes.create_string_buffer(St7.kMaxStrLen)
-        St7.St7GetEntityGroup(uID, St7.tyBEAM, beam, ctypes.byref(group_id))
-        St7.St7GetGroupIDName(uID, group_id, group_name, St7.kMaxStrLen)
+        _check_St7_error_message(St7.St7GetEntityGroup(mctx.uID, St7.tyBEAM, beam, ctypes.byref(group_id)))
+        _check_St7_error_message(St7.St7GetGroupIDName(mctx.uID, group_id, group_name, St7.kMaxStrLen))
 
         # Access the beam axes data
         axis_data = ctypes.c_double * 9
         axis_array = axis_data()
 
-        St7.St7GetBeamAxisSystemInitial(uID, beam, axis_array)
+        _check_St7_error_message(St7.St7GetBeamAxisSystemInitial(mctx.uID, beam, axis_array))
 
         # Access the beam geometric data
         element_data = ctypes.c_double * 3
         element_data_array = element_data()
 
-        St7.St7GetElementData(uID, St7.tyBEAM, beam, 0, element_data_array)
+        _check_St7_error_message(St7.St7GetElementData(mctx.uID, St7.tyBEAM, beam, 0, element_data_array))
 
         node1 = connections[1]
         node2 = connections[2]
@@ -968,57 +482,309 @@ def extract_beam_properties(uID: ctypes.c_int):
         dir3_y = axis_array[7]
         dir3_z = axis_array[8]
 
-        del axis_array, element_data_array
-
         result = (beam, node1, node2, length, property_name.value.decode(),
                   group_name.value.decode(), id_number.value, dir1_x, dir1_y, dir1_z,
                   dir2_x, dir2_y, dir2_z, dir3_x, dir3_y, dir3_z)
         yield result
 
 
-# Function to extract the beam force results
-def extract_beam_forces(uID: ctypes.c_int, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int, position_values=(0.0, 0.25, 0.5, 0.75, 1.0)):
+# Function to extract beam distributed loading, both global and principal
+def extract_beam_distributed_loading(mctx: ModelExtractionContext, pfs: ParquetSettings):
 
     nBeams = ctypes.c_int(0)
-    St7.St7GetTotal(uID, St7.tyBEAM, ctypes.byref(nBeams))
+    _check_St7_error_message(St7.St7GetTotal(mctx.uID, St7.tyBEAM, ctypes.byref(nBeams)))
 
-    nLoadCases = ctypes.c_int(0)
-    St7.St7GetNumLoadCase(uID, ctypes.byref(nLoadCases))
+    logger.info(f"Extracting beam distributed loads...")
+
+    for beam in range(1, nBeams.value + 1):
+
+        # We need to access the number of different loads of a given type applied to a beam
+        dist_principal_load_count = ctypes.c_int(0)
+        _check_St7_error_message(St7.St7GetEntityAttributeSequenceCount(mctx.uID, St7.tyBEAM, beam, St7.aoBeamDLL,
+                                               ctypes.byref(dist_principal_load_count)))
+
+        load_entity_array = ctypes.c_int * (dist_principal_load_count.value * 4)
+        load_entity_values = load_entity_array()
+
+        # Once we have the number of loads, we can access information about each of the loads
+        _check_St7_error_message(St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyBEAM, beam, St7.aoBeamDLL,
+                                          dist_principal_load_count, load_entity_values))
+
+        # Now that we have the information about the
+        for i in range(dist_principal_load_count.value):
+            axis = load_entity_values[(4 * i) + St7.ipAttrAxis]
+            load_case = load_entity_values[(4 * i) + St7.ipAttrCase]
+            load_case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
+
+            _check_St7_error_message(St7.St7GetLoadCaseName(mctx.uID, load_case, load_case_name, kMaxStrLen))
+
+            id_number = load_entity_values[(4 * i) + St7.ipAttrID]
+            sid = f"{beam}-DLL-{load_case}-{id_number}"
+            dl_type = ctypes.c_int(0)
+            dl_value_array = ctypes.c_double * 6
+            dl_values = dl_value_array()
+
+            _check_St7_error_message(St7.St7GetBeamDistributedForcePrincipal6ID(mctx.uID, beam, axis, load_case,
+                                                                                id_number, ctypes.byref(dl_type),
+                                                                                dl_values))
+            if dl_type.value == St7.dlConstant:
+                dl_type = "Constant"
+            elif dl_type.value == St7.dlLinear:
+                dl_type = "Linear"
+            elif dl_type.value == St7.dlTriangular:
+                dl_type = "Triangular"
+            elif dl_type.value == St7.dlThreePoint0:
+                dl_type = "ThreePoint0"
+            elif dl_type.value == St7.dlThreePoint1:
+                dl_type = "ThreePoint1"
+            elif dl_type.value == St7.dlTrapezoidal:
+                dl_type = "Trapezoidal"
+            else:
+                raise ValueError(f"Load type not recognized for beam {beam}, load case {load_case}, load id {id_number}")
+
+            projected = False
+
+            pa = dl_values[0]
+            pb = dl_values[1]
+            p1 = dl_values[2]
+            p2 = dl_values[3]
+            a = dl_values[4]
+            b = dl_values[5]
+
+            result = (sid, "DistPrincipal", beam, load_case, load_case_name.value.decode(), axis, id_number, dl_type,
+                      projected, pa, pb, p1, p2, a, b)
+            yield result
+
+        # Rinse and repeat the exercise for the global loads
+        dist_global_load_count = ctypes.c_int(0)
+        St7.St7GetEntityAttributeSequenceCount(mctx.uID, St7.tyBEAM, beam, St7.aoBeamDLG,
+                                               ctypes.byref(dist_global_load_count))
+        load_entity_array = ctypes.c_int * (dist_global_load_count.value * 4)
+        load_entity_values = load_entity_array()
+
+        St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyBEAM, beam, St7.aoBeamDLG,
+                                          dist_global_load_count, load_entity_values)
+
+        for i in range(dist_global_load_count.value):
+            axis = load_entity_values[(4 * i) + St7.ipAttrAxis]
+            load_case = load_entity_values[(4 * i) + St7.ipAttrCase]
+            load_case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
+            St7.St7GetLoadCaseName(mctx.uID, load_case, load_case_name, kMaxStrLen)
+            id_number = load_entity_values[(4 * i) + St7.ipAttrID]
+            sid = f"{beam}-DLG-{load_case}-{id_number}"
+            dl_type = ctypes.c_int(0)
+            dl_value_array = ctypes.c_double * 6
+            dl_values = dl_value_array()
+            projected = ctypes.c_int(0)
+            St7.St7GetBeamDistributedForceGlobal6ID(mctx.uID, beam, axis, load_case, id_number, ctypes.byref(projected),
+                                                    ctypes.byref(dl_type), dl_values)
+            if dl_type.value == St7.dlConstant:
+                dl_type = "Constant"
+            elif dl_type.value == St7.dlLinear:
+                dl_type = "Linear"
+            elif dl_type.value == St7.dlTriangular:
+                dl_type = "Triangular"
+            elif dl_type.value == St7.dlThreePoint0:
+                dl_type = "ThreePoint0"
+            elif dl_type.value == St7.dlThreePoint1:
+                dl_type = "ThreePoint1"
+            elif dl_type.value == St7.dlTrapezoidal:
+                dl_type = "Trapezoidal"
+            else:
+                raise ValueError(f"Load type not recognized for beam {beam}, load case {load_case}, load id {id_number}")
+
+            if projected.value == St7.bpProjected:
+                projected = True
+            else:
+                projected = False
+
+            pa = dl_values[0]
+            pb = dl_values[1]
+            p1 = dl_values[2]
+            p2 = dl_values[3]
+            a = dl_values[4]
+            b = dl_values[5]
+
+            result = (sid, "DistGlobal", beam, load_case, load_case_name.value.decode(), axis, id_number, dl_type,
+                      projected, pa, pb, p1, p2, a, b)
+            yield result
+
+
+# Function to extract beam non-structural masses
+def extract_beam_ns_mass_loading(mctx: ModelExtractionContext, pfs: ParquetSettings):
+
+    nBeams = ctypes.c_int(0)
+    _check_St7_error_message(St7.St7GetTotal(mctx.uID, St7.tyBEAM, ctypes.byref(nBeams)))
+
+    logger.info(f"Extracting beam non-structural masses...")
+
+    for beam in range(1, nBeams.value + 1):
+
+        # We need to access the number of different loads of a given type applied to a beam
+        ns_mass_load_count = ctypes.c_int(0)
+        _check_St7_error_message(St7.St7GetEntityAttributeSequenceCount(mctx.uID, St7.tyBEAM, beam, St7.aoBeamNSMass,
+                                               ctypes.byref(ns_mass_load_count)))
+
+        load_entity_array = ctypes.c_int * (ns_mass_load_count.value * 4)
+        load_entity_values = load_entity_array()
+
+        # Once we have the number of loads, we can access information about each of the loads
+        _check_St7_error_message(St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyBEAM, beam, St7.aoBeamNSMass,
+                                          ns_mass_load_count, load_entity_values))
+
+        for i in range(ns_mass_load_count.value):
+            load_case = load_entity_values[(4 * i) + St7.ipAttrCase]
+            load_case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
+            _check_St7_error_message(St7.St7GetLoadCaseName(mctx.uID, load_case, load_case_name, kMaxStrLen))
+            id_number = load_entity_values[(4 * i) + St7.ipAttrID]
+            ns_mass_type = ctypes.c_int(0)
+            ns_mass_array = ctypes.c_double * 10
+            ns_masses = ns_mass_array()
+            _check_St7_error_message(St7.St7GetBeamNSMass10ID(mctx.uID, beam, load_case, id_number, ctypes.byref(ns_mass_type), ns_masses))
+
+            if ns_mass_type.value == St7.dlConstant:
+                ns_mass_type = "Constant"
+            elif ns_mass_type.value == St7.dlLinear:
+                ns_mass_type = "Linear"
+            elif ns_mass_type.value == St7.dlTriangular:
+                ns_mass_type = "Triangular"
+            elif ns_mass_type.value == St7.dlThreePoint0:
+                ns_mass_type = "ThreePoint0"
+            elif ns_mass_type.value == St7.dlThreePoint1:
+                ns_mass_type = "ThreePoint1"
+            elif ns_mass_type.value == St7.dlTrapezoidal:
+                ns_mass_type = "Trapezoidal"
+            else:
+                raise ValueError(f"Non-structural mass load type not recognized for beam {beam}, load case {load_case}, id {id_number}")
+
+            pa = ns_masses[0]
+            pb = ns_masses[1]
+            p1 = ns_masses[2]
+            p2 = ns_masses[3]
+            a = ns_masses[4]
+            b = ns_masses[5]
+
+            dynamic_factor = ns_masses[6]
+            offset_vec_x = ns_masses[7]
+            offset_vec_y = ns_masses[8]
+            offset_vec_z = ns_masses[9]
+
+            sid = f"{beam}-NSM-{load_case}-{id_number}"
+
+            result = (sid, beam, load_case, load_case_name.value.decode(), id_number, ns_mass_type,
+                      pa, pb, p1, p2, a, b, dynamic_factor, offset_vec_x, offset_vec_y, offset_vec_z)
+
+            yield result
+
+
+# Function to extract beam point loading, both global and principal
+def extract_beam_point_loading(mctx: ModelExtractionContext, pfs: ParquetSettings):
+
+    nBeams = ctypes.c_int(0)
+    _check_St7_error_message(St7.St7GetTotal(mctx.uID, St7.tyBEAM, ctypes.byref(nBeams)))
+    logger.info(f"Extracting beam point loads...")
+
+    for beam in range(1, nBeams.value + 1):
+
+        # Principal axis point load extraction
+        point_principal_load_count = ctypes.c_int(0)
+        _check_St7_error_message(St7.St7GetEntityAttributeSequenceCount(mctx.uID, St7.tyBEAM, beam, St7.aoBeamCFL,
+                                               ctypes.byref(point_principal_load_count)))
+
+        load_entity_array = ctypes.c_int * (point_principal_load_count.value * 4)
+        load_entity_values = load_entity_array()
+
+        _check_St7_error_message(St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyBEAM, beam, St7.aoBeamCFL,
+                                          point_principal_load_count, load_entity_values))
+
+        point_load_force_array = ctypes.c_double * 4
+        point_load_forces = point_load_force_array()
+
+        for i in range(point_principal_load_count.value):
+            load_case = load_entity_values[(4 * i) + St7.ipAttrCase]
+            load_case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
+            _check_St7_error_message(St7.St7GetLoadCaseName(mctx.uID, load_case, load_case_name, kMaxStrLen))
+            id_number = load_entity_values[(4 * i) + St7.ipAttrID]
+            _check_St7_error_message(St7.St7GetBeamPointForcePrincipal4ID(mctx.uID, beam, load_case, id_number, point_load_forces))
+            position = point_load_forces[3]
+            point_load_x = point_load_forces[0]
+            point_load_y = point_load_forces[1]
+            point_load_z = point_load_forces[2]
+            sid = f"{beam}-CFL-{load_case}-{id_number}"
+
+            result = (sid, "Principal", beam, load_case, load_case_name.value.decode(), id_number,
+                      position, point_load_x, point_load_y, point_load_z)
+
+            yield result
+
+        # Global axis point loads
+        point_global_load_count = ctypes.c_int(0)
+        St7.St7GetEntityAttributeSequenceCount(mctx.uID, St7.tyBEAM, beam, St7.aoBeamCFG,
+                                               ctypes.byref(point_global_load_count))
+
+        load_entity_array = ctypes.c_int * (point_global_load_count.value * 4)
+        load_entity_values = load_entity_array()
+
+        St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyBEAM, beam, St7.aoBeamCFG,
+                                          point_global_load_count, load_entity_values)
+
+        point_load_force_array = ctypes.c_double * 4
+        point_load_forces = point_load_force_array()
+
+        for i in range(point_global_load_count.value):
+            load_case = load_entity_values[(4 * i) + St7.ipAttrCase]
+            load_case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
+            St7.St7GetLoadCaseName(mctx.uID, load_case, load_case_name, kMaxStrLen)
+            id_number = load_entity_values[(4 * i) + St7.ipAttrID]
+            St7.St7GetBeamPointForceGlobal4ID(mctx.uID, beam, load_case, id_number, point_load_forces)
+            position = point_load_forces[3]
+            point_load_x = point_load_forces[0]
+            point_load_y = point_load_forces[1]
+            point_load_z = point_load_forces[2]
+            sid = f"{beam}-CFG-{load_case}-{id_number}"
+
+            result = (sid, "Global", beam, load_case, load_case_name.value.decode(), id_number,
+                      position, point_load_x, point_load_y, point_load_z)
+
+            yield result
+
+
+# Function to extract the beam force results
+def extract_beam_forces(mctx: ModelExtractionContext, pfs: ParquetSettings):
+
+    nBeams = ctypes.c_int(0)
+    _check_St7_error_message(St7.St7GetTotal(mctx.uID, St7.tyBEAM, ctypes.byref(nBeams)))
 
     # The following ensures that the result positions are output as a ratio of the overall member length (0.0...1.0)
-    St7.St7SetBeamResultPosMode(uID, St7.bpParam)
+    _check_St7_error_message(St7.St7SetBeamResultPosMode(mctx.uID, St7.bpParam))
 
-    # Shifted beam results outside the result case loop - SQL transaction will occur only once at the end
-    # rather than after every result case, which should enhance performance a bit.  May need to
-    # adjust this in the future though, as the batch sizes might get too big to hold in memory all at once.
-
-    number_of_cases = primary_combo_count.value + secondary_combo_count.value
+    number_of_cases = mctx.primary_combo_count.value + mctx.secondary_combo_count.value
     for case_number in range(1, number_of_cases + 1):
 
         case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
-        St7.St7GetResultCaseName(uID, case_number, case_name, St7.kMaxStrLen)
-        print(f"Extracting beam forces for result case {case_name.value.decode()}...")
+        _check_St7_error_message(St7.St7GetResultCaseName(mctx.uID, case_number, case_name, St7.kMaxStrLen))
+        logger.info(f"Extracting beam forces for result case {case_name.value.decode()}...")
 
         for beam in range(1, nBeams.value + 1):
 
             # Number of result columns (i.e. fields)
             number_columns = ctypes.c_int(0)
 
-            force_array = ctypes.c_double * (len(position_values) * St7.kMaxBeamResult)
+            force_array = ctypes.c_double * (len(pfs.position_values) * St7.kMaxBeamResult)
             forces = force_array()
 
             # Station positions along the element for querying loads
-            position_values_c = [ctypes.c_double(p) for p in position_values]
+            position_values_c = [ctypes.c_double(p) for p in pfs.position_values]
             pos_array = ctypes.c_double * len(position_values_c)
             positions = pos_array(*position_values_c)
 
             # Get the beam results using the Strand API
-            St7.St7GetBeamResultArrayPos(uID, St7.rtBeamForce, St7.stBeamPrincipal, beam, case_number,
-                                         len(position_values), positions, ctypes.byref(number_columns), forces)
+            _check_St7_error_message(St7.St7GetBeamResultArrayPos(mctx.uID, St7.rtBeamForce, St7.stBeamPrincipal, beam, case_number,
+                                         len(pfs.position_values), positions, ctypes.byref(number_columns), forces))
 
             # Access the forces from each beam at each station position, and add these to the result list
-            for i in range(len(position_values)):
-                position = f"{position_values[i]:.2f}"
+            for i in range(len(pfs.position_values)):
+                position = f"{pfs.position_values[i]:.2f}"
                 fx = forces[(i * 6) + St7.ipBeamAxialF]
                 fy = forces[(i * 6) + St7.ipBeamSF1]
                 fz = forces[(i * 6) + St7.ipBeamSF2]
@@ -1031,41 +797,40 @@ def extract_beam_forces(uID: ctypes.c_int, primary_combo_count: ctypes.c_int, se
 
 
 # Function to extract the beam displacement results
-def extract_beam_displacements(uID: ctypes.c_int, primary_combo_count: ctypes.c_int,
-                               secondary_combo_count: ctypes.c_int, position_values=(0.0, 0.25, 0.5, 0.75, 1.0)):
+def extract_beam_displacements(mctx: ModelExtractionContext, pfs: ParquetSettings):
     nBeams = ctypes.c_int(0)
-    St7.St7GetTotal(uID, St7.tyBEAM, ctypes.byref(nBeams))
+    _check_St7_error_message(St7.St7GetTotal(mctx.uID, St7.tyBEAM, ctypes.byref(nBeams)))
 
     # The following ensures that the result positions are output as a ratio of the overall member length (0.0...1.0)
-    St7.St7SetBeamResultPosMode(uID, St7.bpParam)
+    _check_St7_error_message(St7.St7SetBeamResultPosMode(mctx.uID, St7.bpParam))
 
-    number_of_cases = primary_combo_count.value + secondary_combo_count.value
+    number_of_cases = mctx.primary_combo_count.value + mctx.secondary_combo_count.value
     for case_number in range(1, number_of_cases + 1):
 
         case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
-        St7.St7GetResultCaseName(uID, case_number, case_name, St7.kMaxStrLen)
-        print(f"Extracting beam displacements for result case {case_name.value.decode()}...")
+        _check_St7_error_message(St7.St7GetResultCaseName(mctx.uID, case_number, case_name, St7.kMaxStrLen))
+        logger.info(f"Extracting beam displacements for result case {case_name.value.decode()}...")
 
         for beam in range(1, nBeams.value + 1):
 
             # Number of result columns (i.e. fields)
             number_columns = ctypes.c_int(0)
 
-            disp_array = ctypes.c_double * (len(position_values) * St7.kMaxBeamResult)
+            disp_array = ctypes.c_double * (len(pfs.position_values) * St7.kMaxBeamResult)
             displacements = disp_array()
 
             # Station positions along the element for querying loads
-            position_values_c = [ctypes.c_double(p) for p in position_values]
+            position_values_c = [ctypes.c_double(p) for p in pfs.position_values]
             pos_array = ctypes.c_double * len(position_values_c)
             positions = pos_array(*position_values_c)
 
             # Get the beam results using the Strand API
-            St7.St7GetBeamResultArrayPos(uID, St7.rtBeamDisp, St7.stBeamGlobal, beam, case_number,
-                                         len(position_values), positions, ctypes.byref(number_columns), displacements)
+            _check_St7_error_message(St7.St7GetBeamResultArrayPos(mctx.uID, St7.rtBeamDisp, St7.stBeamGlobal, beam, case_number,
+                                         len(pfs.position_values), positions, ctypes.byref(number_columns), displacements))
 
             # Access the forces from each beam at each station position, and add these to the result list
-            for i in range(len(position_values)):
-                position = position_values[i]
+            for i in range(len(pfs.position_values)):
+                position = pfs.position_values[i]
                 ux = displacements[(i * 6) + 0]
                 uy = displacements[(i * 6) + 1]
                 uz = displacements[(i * 6) + 2]
@@ -1075,12 +840,12 @@ def extract_beam_displacements(uID: ctypes.c_int, primary_combo_count: ctypes.c_
 
 
 # Function to extract the plate attributes and properties
-def extract_plate_properties(uID: ctypes.c_int):
+def extract_plate_properties(mctx: ModelExtractionContext, pfs: ParquetSettings):
 
     nPlates = ctypes.c_int(0)
-    St7.St7GetTotal(uID, St7.tyPLATE, ctypes.byref(nPlates))
+    _check_St7_error_message(St7.St7GetTotal(mctx.uID, St7.tyPLATE, ctypes.byref(nPlates)))
 
-    print("Extracting plate attributes and properties...")
+    logger.info("Extracting plate attributes and properties...")
 
     for plate in range(1, nPlates.value + 1):
 
@@ -1089,32 +854,52 @@ def extract_plate_properties(uID: ctypes.c_int):
         connections = connection_array()
 
         # Access the beam connection information
-        St7.St7GetElementConnection(uID, St7.tyPLATE, plate, connections)
+        _check_St7_error_message(St7.St7GetElementConnection(mctx.uID, St7.tyPLATE, plate, connections))
 
         # Access the plate id information
         id_number = ctypes.c_int(0)
-        St7.St7GetPlateID(uID, plate, id_number)
+        _check_St7_error_message(St7.St7GetPlateID(mctx.uID, plate, id_number))
 
         # Access the property associated with the plate
         property_number = ctypes.c_int(0)
         property_name = ctypes.create_string_buffer(St7.kMaxStrLen)
         property_type = ctypes.c_int(0)
         material_type = ctypes.c_int(0)
-        St7.St7GetElementProperty(uID, St7.ptPLATEPROP, plate, ctypes.byref(property_number))
-        St7.St7GetPropertyName(uID, St7.ptPLATEPROP, property_number, property_name, St7.kMaxStrLen)
-        St7.St7GetPlatePropertyType(uID, property_number, ctypes.byref(property_type), ctypes.byref(material_type))
+        _check_St7_error_message(St7.St7GetElementProperty(mctx.uID, St7.ptPLATEPROP, plate, ctypes.byref(property_number)))
+        _check_St7_error_message(St7.St7GetPropertyName(mctx.uID, St7.ptPLATEPROP, property_number, property_name, St7.kMaxStrLen))
+        _check_St7_error_message(St7.St7GetPlatePropertyType(mctx.uID, property_number, ctypes.byref(property_type), ctypes.byref(material_type)))
+
+        # Need to convert the plate property type to a string that is human interpretable
+        if property_type.value == St7.ptNull:
+            property_type = "None"
+        elif property_type.value == St7.ptPlaneStress:
+            property_type = "PlaneStress"
+        elif property_type.value == St7.ptPlaneStrain:
+            property_type = "PlaneStrain"
+        elif property_type.value == St7.ptAxisymmetric:
+            property_type = "Axisymmetric"
+        elif property_type.value == St7.ptPlateShell:
+            property_type = "PlateShell"
+        elif property_type.value == St7.ptShearPanel:
+            property_type = "ShearPanel"
+        elif property_type.value == St7.ptMembrane:
+            property_type = "Membrane"
+        elif property_type.value == St7.ptLoadPatch:
+            property_type = "LoadPatch"
+        else:
+            raise ValueError(f"Type of plate object is not recognized: plate number {plate}")
 
         # Access the group associated with the plate
         group_id = ctypes.c_int(0)
         group_name = ctypes.create_string_buffer(St7.kMaxStrLen)
-        St7.St7GetEntityGroup(uID, St7.tyPLATE, plate, ctypes.byref(group_id))
-        St7.St7GetGroupIDName(uID, group_id, group_name, St7.kMaxStrLen)
+        _check_St7_error_message(St7.St7GetEntityGroup(mctx.uID, St7.tyPLATE, plate, ctypes.byref(group_id)))
+        _check_St7_error_message(St7.St7GetGroupIDName(mctx.uID, group_id, group_name, St7.kMaxStrLen))
 
         # Access the plate geometric data
         element_data = ctypes.c_double * 1
         element_data_array = element_data()
 
-        St7.St7GetElementData(uID, St7.tyPLATE, plate, 0, element_data_array)
+        _check_St7_error_message(St7.St7GetElementData(mctx.uID, St7.tyPLATE, plate, 0, element_data_array))
 
         node_count = connections[0]
         n1 = connections[1]
@@ -1123,45 +908,86 @@ def extract_plate_properties(uID: ctypes.c_int):
 
         if node_count == 3:
             n4 = 0
+            element_type = "TRI"
         else:
             n4 = connections[4]
+            element_type = "QUAD"
 
         area = element_data_array[0]
 
-        del element_data_array, connections
-
-        result = (plate, n1, n2, n3, n4, area, property_name.value.decode(), property_type.value,
-                  group_name.value.decode(), id_number.value)
+        result = (plate, property_name.value.decode(), property_type, element_type, group_name.value.decode(),
+                  id_number.value, area, n1, n2, n3, n4)
 
         yield result
 
 
 # Function to extract the plate loading from the model
-def extract_plate_loading(uID: ctypes.c_int, load_case_count: ctypes.c_int):
+def extract_plate_loading(mctx: ModelExtractionContext, pfs: ParquetSettings):
 
     nPlates = ctypes.c_int(0)
-    St7.St7GetTotal(uID, St7.tyPLATE, ctypes.byref(nPlates))
-    print("Extracting plate loads...")
+    _check_St7_error_message(St7.St7GetTotal(mctx.uID, St7.tyPLATE, ctypes.byref(nPlates)))
+
+    logger.info(f"Extracting plate loads...")
 
     for plate in range(1, nPlates.value + 1):
-        for case_number in range(1, load_case_count.value + 1):
 
-            case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
-            St7.St7GetLoadCaseName(uID, case_number, ctypes.byref(case_name), kMaxStrLen)  # Not sure if this is OK
+        plate_normal_load_count = ctypes.c_int(0)
+        _check_St7_error_message(St7.St7GetEntityAttributeSequenceCount(mctx.uID, St7.tyPLATE, plate,
+                                                                        St7.aoPlateFacePressure, ctypes.byref(plate_normal_load_count)))
+
+        load_entity_array = ctypes.c_int * (plate_normal_load_count.value * 4)
+        load_entity_values = load_entity_array()
+
+        _check_St7_error_message(St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyPLATE, plate, St7.aoPlateFacePressure,
+                                          plate_normal_load_count, load_entity_values))
+
+        for i in range(plate_normal_load_count.value):
+
+            load_case = load_entity_values[(4 * i) + St7.ipAttrCase]
+            load_case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
+            _check_St7_error_message(St7.St7GetLoadCaseName(mctx.uID, load_case, load_case_name, kMaxStrLen))
 
             # Get the plate normal loading
             norm_pressure_array = ctypes.c_double * 2
             norm_pressures = norm_pressure_array()
-            St7.St7GetPlateNormalPressure2(uID, plate, case_number, ctypes.byref(norm_pressures))
+            _check_St7_error_message(St7.St7GetPlateNormalPressure2(mctx.uID, plate, load_case, norm_pressures))
             norm_neg_pressure = norm_pressures[0]
-            norm_pos_pressure = norm_pressure_array[1]
+            norm_pos_pressure = norm_pressures[1]
+
+            result = (plate, load_case, load_case_name.value.decode(),
+                      norm_neg_pressure, norm_pos_pressure,
+                      0.0, 0.0, 0.0, "None",
+                      0.0, 0.0, 0.0, "None",
+                      0.0, 0.0)
+
+            yield result
+
+        plate_global_load_count = ctypes.c_int(0)
+        _check_St7_error_message(St7.St7GetEntityAttributeSequenceCount(mctx.uID, St7.tyPLATE, plate,
+                                                                        St7.aoPlateGlobalPressure,
+                                                                        ctypes.byref(plate_global_load_count)))
+
+        load_entity_array = ctypes.c_int * (plate_global_load_count.value * 4)
+        load_entity_values = load_entity_array()
+
+        _check_St7_error_message(
+            St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyPLATE, plate, St7.aoPlateGlobalPressure,
+                                              plate_global_load_count, load_entity_values))
+
+        for i in range(plate_global_load_count.value):
+
+            load_case = load_entity_values[(4 * i) + St7.ipAttrCase]
+            load_case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
+            _check_St7_error_message(St7.St7GetLoadCaseName(mctx.uID, load_case, load_case_name, kMaxStrLen))
 
             # Get the plate global loading
             glob_pressure_array = ctypes.c_double * 3
             glob_pos_pressures = glob_pressure_array()
             glob_neg_pressures = glob_pressure_array()
-            St7.St7GetPlateGlobalPressure3S(uID, plate, St7.psPlateMinusZ, case_number, St7.ppNone, ctypes.byref(glob_neg_pressures))
-            St7.St7GetPlateGlobalPressure3S(uID, plate, St7.psPlatePlusZ, case_number, St7.ppNone, ctypes.byref(glob_pos_pressures))
+            glob_neg_proj = ctypes.c_int(0)
+            glob_pos_proj = ctypes.c_int(0)
+            _check_St7_error_message(St7.St7GetPlateGlobalPressure3S(mctx.uID, plate, St7.psPlateMinusZ, load_case, ctypes.byref(glob_neg_proj), glob_neg_pressures))
+            _check_St7_error_message(St7.St7GetPlateGlobalPressure3S(mctx.uID, plate, St7.psPlatePlusZ, load_case, ctypes.byref(glob_pos_proj), glob_pos_pressures))
             glob_neg_x_pressure = glob_neg_pressures[0]
             glob_neg_y_pressure = glob_neg_pressures[1]
             glob_neg_z_pressure = glob_neg_pressures[2]
@@ -1169,33 +995,120 @@ def extract_plate_loading(uID: ctypes.c_int, load_case_count: ctypes.c_int):
             glob_pos_y_pressure = glob_pos_pressures[1]
             glob_pos_z_pressure = glob_pos_pressures[2]
 
+            if glob_neg_proj.value == St7.ppProjResultant:
+                glob_neg_proj = "Resultant"
+            elif glob_neg_proj.value == St7.ppProjComponents:
+                glob_neg_proj = "Components"
+            else:
+                glob_neg_proj = "None"
+
+            if glob_pos_proj.value == St7.ppProjResultant:
+                glob_pos_proj = "Resultant"
+            elif glob_pos_proj.value == St7.ppProjComponents:
+                glob_pos_proj = "Components"
+            else:
+                glob_pos_proj = "None"
+
+            result = (plate, load_case, load_case_name.value.decode(),
+                      0.0, 0.0,
+                      glob_neg_x_pressure, glob_neg_y_pressure, glob_neg_z_pressure, glob_neg_proj,
+                      glob_pos_x_pressure, glob_pos_y_pressure, glob_pos_z_pressure, glob_pos_proj,
+                      0.0, 0.0)
+
+            yield result
+
+        plate_shear_load_count = ctypes.c_int(0)
+        _check_St7_error_message(St7.St7GetEntityAttributeSequenceCount(mctx.uID, St7.tyPLATE, plate,
+                                                                        St7.aoPlateFaceShear,
+                                                                        ctypes.byref(plate_shear_load_count)))
+
+        load_entity_array = ctypes.c_int * (plate_shear_load_count.value * 4)
+        load_entity_values = load_entity_array()
+
+        _check_St7_error_message(
+            St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyPLATE, plate, St7.aoPlateFaceShear,
+                                              plate_shear_load_count, load_entity_values))
+
+        for i in range(plate_shear_load_count.value):
+            load_case = load_entity_values[(4 * i) + St7.ipAttrCase]
+            load_case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
+            _check_St7_error_message(St7.St7GetLoadCaseName(mctx.uID, load_case, load_case_name, kMaxStrLen))
+
             # Get the plate shear loading
             shear_stress_array = ctypes.c_double * 2
             shear_stresses = shear_stress_array()
-            St7.St7GetPlateShear2(uID, plate, case_number, ctypes.byref(shear_stresses))
+            _check_St7_error_message(St7.St7GetPlateShear2(mctx.uID, plate, load_case, shear_stresses))
             shear_stress_x = shear_stresses[0]
             shear_stress_y = shear_stresses[1]
 
-            result = (plate, case_number, case_name.value.decode(),
-                      norm_neg_pressure, norm_pos_pressure,
-                      glob_neg_x_pressure, glob_neg_y_pressure, glob_neg_z_pressure,
-                      glob_pos_x_pressure, glob_pos_y_pressure, glob_pos_z_pressure,
+            result = (plate, load_case, load_case_name.value.decode(),
+                      0.0, 0.0,
+                      0.0, 0.0, 0.0, "None",
+                      0.0, 0.0, 0.0, "None",
                       shear_stress_x, shear_stress_y)
 
             yield result
 
+
+# Function to extract the plate non-structural masses
+def extract_plate_non_structural_mass(mctx: ModelExtractionContext, pfs: ParquetSettings):
+    nPlates = ctypes.c_int(0)
+    _check_St7_error_message(St7.St7GetTotal(mctx.uID, St7.tyPLATE, ctypes.byref(nPlates)))
+
+    logger.info("Extracting plate non-structural masses...")
+
+    for plate in range(1, nPlates.value + 1):
+
+        plate_mass_load_count = ctypes.c_int(0)
+        _check_St7_error_message(St7.St7GetEntityAttributeSequenceCount(mctx.uID, St7.tyPLATE, plate,
+                                                                        St7.aoPlateNSMass, ctypes.byref(plate_mass_load_count)))
+
+        load_entity_array = ctypes.c_int * (plate_mass_load_count.value * 4)
+        load_entity_values = load_entity_array()
+
+        _check_St7_error_message(St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyPLATE, plate, St7.aoPlateNSMass,
+                                          plate_mass_load_count, load_entity_values))
+
+
+
+        for i in range(plate_mass_load_count.value):
+
+            plate_ns_mass_array = ctypes.c_double * 6
+            plate_ns_masses = plate_ns_mass_array()
+
+            load_case = load_entity_values[(4 * i) + St7.ipAttrCase]
+            load_case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
+            id_number = load_entity_values[(4 * i) + St7.ipAttrID]
+            _check_St7_error_message(St7.St7GetLoadCaseName(mctx.uID, load_case, load_case_name, kMaxStrLen))
+
+            _check_St7_error_message(St7.St7GetPlateNSMass5ID(mctx.uID, plate, load_case, id_number, plate_ns_masses))
+
+            ns_mass = plate_ns_masses[0]
+            dynamic_factor = plate_ns_masses[1]
+            offset_vec_x = plate_ns_masses[2]
+            offset_vec_y = plate_ns_masses[3]
+            offset_vec_z = plate_ns_masses[4]
+
+            sid = f"{plate}-NSM-{load_case}"
+
+            result = (plate, load_case, load_case_name.value.decode(), ns_mass, dynamic_factor, offset_vec_x, offset_vec_y, offset_vec_z)
+
+            yield result
+
+
 # Function to extract the plate local stress results
-def extract_plate_local_stresses(uID: ctypes.c_int, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int):
+def extract_plate_local_stresses(mctx: ModelExtractionContext, pfs: ParquetSettings):
     pass
 
+
 # Function to extract the plate combined stress results
-def extract_plate_combined_stresses(uID: ctypes.c_int, primary_combo_count: ctypes.c_int, secondary_combo_count: ctypes.c_int):
+def extract_plate_combined_stresses(mctx: ModelExtractionContext, pfs: ParquetSettings):
     pass
 
 
 # Main function for extracting results
-def extract_model_data(model_file: str, result_file: str, scratch_path: str, parquet=False, directory=None,
-                       db_fp: str = None, output_options=None):
+def extract_model_data(model_file: pathlib.Path, result_file: pathlib.Path, scratch_path: pathlib.Path,
+                       directory: pathlib.Path, output_options=None):
 
     # Initialize the Strand7 model
     init = initialize_model(model_file, result_file, scratch_path)
@@ -1203,118 +1116,177 @@ def extract_model_data(model_file: str, result_file: str, scratch_path: str, par
 
     # Get the number of load cases
     load_case_count = ctypes.c_int(0)
-    St7.St7GetNumLoadCase(uID, ctypes.byref(load_case_count))
+    _check_St7_error_message(St7.St7GetNumLoadCase(uID, ctypes.byref(load_case_count)))
+
+    model_context = ModelExtractionContext(model_file, result_file, uID, load_case_count, primary_combo_count,
+                                           secondary_combo_count, directory)
 
     # Logic for creating the parquet files
-    if parquet:
-        if not os.path.exists(directory):
-            os.mkdir(directory)
-        if output_options is None:
+    directory.mkdir(parents=True, exist_ok=True)
 
-            parquet_insert_nodal_coordinates(uID, directory)
-            parquet_insert_nodal_reactions(uID, primary_combo_count, secondary_combo_count, directory)
-            parquet_insert_nodal_displacements(uID, primary_combo_count, secondary_combo_count, directory)
-            parquet_insert_beam_forces(uID, primary_combo_count, secondary_combo_count, directory)
-            parquet_insert_beam_displacements(uID, primary_combo_count, secondary_combo_count, directory)
-            parquet_insert_beam_properties(uID, directory)
-            parquet_insert_plate_properties(uID, directory)
-            parquet_insert_plate_loading(uID, load_case_count, directory)
+    if output_options is None:
+        for rt in ResultType:
+            parquet_insert(model_context, rt)
 
-        else:
-            if output_options["Nodal Coordinates"] == "TRUE":
-                parquet_insert_nodal_coordinates(uID, directory)
-            if output_options["Nodal Reactions"] == "TRUE":
-                parquet_insert_nodal_reactions(uID, primary_combo_count, secondary_combo_count, directory)
-            if output_options["Nodal Displacements"] == "TRUE":
-                parquet_insert_nodal_displacements(uID, primary_combo_count, secondary_combo_count, directory)
-            if output_options["Beam Properties"] == "TRUE":
-                parquet_insert_beam_properties(uID, directory)
-            if output_options["Beam Forces"] == "TRUE":
-                parquet_insert_beam_forces(uID, primary_combo_count, secondary_combo_count, directory)
-            if output_options["Beam Displacements"] == "TRUE":
-                parquet_insert_beam_displacements(uID, primary_combo_count, secondary_combo_count, directory)
-            if output_options["Plate Properties"] == "TRUE":
-                parquet_insert_plate_properties(uID, directory)
-            if output_options["Plate Loading"] == "TRUE":
-                parquet_insert_plate_loading(uID, load_case_count, directory)
-
-    # If not running the parquet extraction, the program will extract to a SQLite db
     else:
-        with connect(db_fp) as conn:
-
-            conn.execute("PRAGMA journal_mode = WAL;")
-            conn.execute("PRAGMA synchronous = NORMAL;")
-            conn.execute("PRAGMA temp_store = MEMORY;")
-
-            cursor = conn.cursor()
-
-            # Ensure the database is ready
-            create_sqlite_database(conn, cursor)
-
-            if uID is None:
-                pass
-
-            else:
-
-                # Extract nodal coordinates and store them in the database
-                sql_insert_nodal_coordinates(conn, cursor, uID)
-
-                # Extract nodal reactions and store them in the database
-                sql_insert_nodal_reactions(conn, cursor, uID, primary_combo_count, secondary_combo_count)
-
-                # Extract nodal displacements and store them in the database
-                sql_insert_nodal_displacements(conn, cursor, uID, primary_combo_count, secondary_combo_count)
-
-                # Extract the beam properties and store them in the database
-                sql_insert_beam_properties(conn, cursor, uID)
-
-                # Extract beam forces and store them in the database
-                sql_insert_beam_forces(conn, cursor, uID, primary_combo_count, secondary_combo_count)
-
-                # Extract beam displacements and store them in the database
-                extract_beam_displacements(uID, primary_combo_count, secondary_combo_count)
+        for rt in ResultType:
+            if output_options[rt.label]:
+                parquet_insert(model_context, rt)
 
     # Close the Strand7 model
-    St7.St7CloseResultFile(uID)
-    St7.St7CloseFile(uID)
-    St7.St7Release()
+    _check_St7_error_message(St7.St7CloseResultFile(uID))
+    _check_St7_error_message(St7.St7CloseFile(uID))
+    _check_St7_error_message(St7.St7Release())
+
+
+class ResultType(Enum):
+
+    NODAL_COORDINATES = ParquetSettings("Nodal Coordinates",
+                                        "nodal_coordinates.parquet",
+                                        schema=_NODAL_COORDINATES_SCHEMA,
+                                        extractor=extract_nodal_coordinates)
+
+    NODAL_LOADING = ParquetSettings("Nodal Loading",
+                                    "nodal_loading.parquet",
+                                    schema=_NODAL_LOADING_SCHEMA,
+                                    extractor=extract_nodal_loading)
+
+    NODAL_REACTIONS = ParquetSettings("Nodal Reactions",
+                                      "nodal_reactions.parquet",
+                                      schema=_NODAL_REACTIONS_SCHEMA,
+                                      extractor=extract_nodal_reactions)
+
+    NODAL_DISPLACEMENTS = ParquetSettings("Nodal Displacements",
+                                          "nodal_displacements.parquet",
+                                          schema=_NODAL_DISPLACEMENTS_SCHEMA,
+                                          extractor=extract_nodal_displacements)
+
+    BEAM_PROPERTIES = ParquetSettings("Beam Properties",
+                                      "beam_properties.parquet",
+                                      schema=_BEAM_PROPERTIES_SCHEMA,
+                                      extractor=extract_beam_properties)
+
+    BEAM_DISTRIBUTED_LOADING = ParquetSettings("Beam Distributed Loading",
+                                               "beam_distributed_loading.parquet",
+                                               schema=_BEAM_DISTRIBUTED_LOADING_SCHEMA,
+                                               extractor=extract_beam_distributed_loading)
+
+    BEAM_NS_MASS_LOADING = ParquetSettings("Beam NS Mass Loading",
+                                           "beam_ns_mass_loading.parquet",
+                                           schema=_BEAM_NON_STRUCTURAL_MASS_SCHEMA,
+                                           extractor=extract_beam_ns_mass_loading)
+
+    BEAM_POINT_LOADING = ParquetSettings("Beam Point Loading",
+                                         "beam_point_loading.parquet",
+                                         schema=_BEAM_POINT_LOADING_SCHEMA,
+                                         extractor=extract_beam_point_loading)
+
+    BEAM_FORCES = ParquetSettings("Beam Forces",
+                                  "beam_forces.parquet",
+                                  schema=_BEAM_FORCE_SCHEMA,
+                                  extractor=extract_beam_forces)
+
+    BEAM_DISPLACEMENTS = ParquetSettings("Beam Displacements",
+                                         "beam_displacements.parquet",
+                                         schema=_BEAM_DISPLACEMENT_SCHEMA,
+                                         extractor=extract_beam_displacements)
+
+    PLATE_PROPERTIES = ParquetSettings("Plate Properties",
+                                       "plate_properties.parquet",
+                                       schema=_PLATE_PROPERTIES_SCHEMA,
+                                       extractor=extract_plate_properties)
+
+    PLATE_LOADING = ParquetSettings("Plate Loading",
+                                    "plate_loading.parquet",
+                                    schema=_PLATE_LOADING_SCHEMA,
+                                    extractor=extract_plate_loading)
+
+    PLATE_NS_MASS_LOADING = ParquetSettings("Plate NS Mass Loading",
+                                            "plate_ns_mass_loading.parquet",
+                                            schema=_PLATE_NON_STRUCTURAL_MASS_SCHEMA,
+                                            extractor=extract_plate_non_structural_mass)
+
+
+    @property
+    def label(self):
+        return self.value.label
+
+    @label.setter
+    def label(self, v):
+        self.value.label = v
+
+    @property
+    def file_name(self):
+        return self.value.file_name
+
+    @file_name.setter
+    def file_name(self, v):
+        self.value.file_name = v
+
+    @property
+    def schema(self):
+        return self.value.schema
+
+    @schema.setter
+    def schema(self, v):
+        self.value.schema = v
+
+    @property
+    def extractor(self):
+        return self.value.extractor
+
+    @extractor.setter
+    def extractor(self, v):
+        self.value.extractor = v
+
+    @property
+    def position_values(self):
+        return self.value.position_values
+
+    @position_values.setter
+    def position_values(self, v):
+        self.value.position_values = v
+
+
+# Generic function for inserting the results of the extraction into parquet files
+def parquet_insert(mctx: ModelExtractionContext, rt: ResultType):
+    """Generic function to write the results from the extraction processes to the parquet files"""
+
+    counter = 0
+
+    with pq.ParquetWriter(mctx.directory / rt.file_name, schema=rt.schema) as writer:
+        result_lists = None
+        for r in rt.extractor(mctx, rt.value):
+            if result_lists is None:
+                result_lists = [[] for _ in range(len(r))]
+            for i, v in enumerate(r):
+                result_lists[i].append(v)
+            counter += 1
+
+            if counter % 50_000 == 0:
+                if result_lists:
+                    _create_parq_table(writer, result_lists, rt.schema)
+
+        if result_lists:
+            _create_parq_table(writer, result_lists, rt.schema)
 
 
 if __name__ == '__main__':
-    # ----------------------------------------------------------------------
-    # USER NOTES
-    # 1. The Strand model must be analyzed and have results before running
-    # this script.
-    # 2. The model must be closed when running the script (can't be open in
-    # the background as the script will access it using the API).
-    # 3. If you have accidentally run the script while the model is open,
-    # make sure to delete the empty database output_file that it created
-    # before rerunning the script.
-    # ----------------------------------------------------------------------
-
-    # Do you want it to extract in parquet format?
 
     # Create scratch path if not exists
-    scratch_folder = f"C:\\Users\\{getuser()}\\Documents\\Changi T5_Database_Scratch"
-    if not os.path.exists(scratch_folder):
-        os.mkdir(scratch_folder)
+    scratch_folder = pathlib.Path(f"C:\\Users\\{getuser()}\\Documents\\Changi T5_Database_Scratch")
+    scratch_folder.mkdir(parents=True, exist_ok=True)
 
     root = tk.Tk()
     root.withdraw()
 
     # Collect the input file paths
-    model_file = filedialog.askopenfilename(title="Select your Strand7 model file")
-    result_file = filedialog.askopenfilename(title="Select your Strand7 results file")
+    model_file = pathlib.Path(filedialog.askopenfilename(title="Select your Strand7 model file"))
+    result_file = pathlib.Path(filedialog.askopenfilename(title="Select your Strand7 results file"))
 
     # Determine the output database format and collect corresponding inputs
-    parquet_output = messagebox.askyesno("Output Format", "Do you want parquet file outputs (will default to SQLite otherwise)?")
-    if parquet_output:
-        directory = pathlib.Path(filedialog.askdirectory(title="Select the directory for your parquet files"))
-        db_fp = None
-    else:
-        db_fp = filedialog.asksaveasfilename(title="Save database file as", defaultextension=".db")
-        directory = None
+    directory = pathlib.Path(filedialog.askdirectory(title="Select the directory for your parquet files"))
 
-    extract_model_data(model_file, result_file, scratch_path=scratch_folder, parquet=parquet_output, directory=directory, db_fp=db_fp)
+    extract_model_data(model_file, result_file, scratch_path=scratch_folder, directory=directory)
 
 
