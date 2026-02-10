@@ -5,30 +5,72 @@ database_extraction.py
 Module to extract the analysis results from a Strand7 model into a series of Parquet files.
 """
 
-__version__ = "1.4.0"
+__version__ = "1.4.2"
 
 
 import ctypes
 import pathlib
 from getpass import getuser
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import logging
-from typing import Callable, Iterable
+from datetime import datetime
+from typing import Callable, Iterable, Union
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog
 import pyarrow as pa
 import pyarrow.parquet as pq
 import St7API as St7
 from St7API import kMaxStrLen
 
-
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-
 logger = logging.getLogger(__name__)
 
+class ColorFormatter(logging.Formatter):
+    """Colors our logging outputs to make easier to read."""
+    COLORS = {
+        logging.DEBUG: "\033[36m",     # Cyan
+        logging.INFO: "\033[32m",      # Green
+        logging.WARNING: "\033[33m",   # Yellow
+        logging.ERROR: "\033[31m",     # Red
+        logging.CRITICAL: "\033[41m",  # Red background
+    }
+    RESET = "\033[0m"
+
+    def format(self, record):
+        color = self.COLORS.get(record.levelno, self.RESET)
+        message = super().format(record)
+        return f"{color}{message}{self.RESET}"
+
+
+def setup_logging(log_fp: Union[str, pathlib.Path]):
+    global logger
+
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(ColorFormatter("%(levelname)s: %(message)s"))
+
+    file_handler = logging.FileHandler(log_fp)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+
+    logger.handlers.clear()
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+    logger.setLevel(logging.INFO)
+
+
 @dataclass(slots=True)
+class ErrorContext:
+    """Class to encapsulate information about the context of errors raised."""
+    calling_function: str
+    warning_entities: set = field(default_factory=set)
+    warning_count: int = 0
+
+    def log_errors(self, logger):
+        logger.warning(f"Warning summary for process: {self.calling_function}")
+        logger.warning(f"Total number of warnings: {self.warning_count:,.0f}")
+        logger.warning(f"Number of unique entities triggering warnings: {len(self.warning_entities):,.0f}\n")
+
+
+@dataclass(slots=True, frozen=True)
 class ModelExtractionContext:
     """Class to encapsulate information about the model required for the extraction functions."""
     model_name: pathlib.Path
@@ -40,13 +82,22 @@ class ModelExtractionContext:
     directory: pathlib.Path
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class ParquetSettings:
     label: str
     file_name: str
     schema: pa.Schema
     extractor: Callable[[ModelExtractionContext, "ParquetSettings"], Iterable]
     position_values: tuple = (0.0, 0.25, 0.5, 0.75, 1.0)
+
+
+class BeamLoadTypes(Enum):
+    CONSTANT = "Constant"
+    LINEAR = "Linear"
+    TRIANGULAR = "Triangular"
+    THREE_POINT_0 = "ThreePoint0"
+    THREE_POINT_1 = "ThreePoint1"
+    TRAPEZOIDAL = "Trapezoidal"
 
 
 _PLATE_LOCAL_STRESS_SCHEMA = pa.schema([("Sxx", pa.float64()),
@@ -231,27 +282,34 @@ _NODAL_LOADING_SCHEMA = pa.schema([("LoadEntryID", pa.string()),
                                    ("Py", pa.float64()),
                                    ("Pz", pa.float64())])
 
-def _check_St7_error_message(err_code: int):
+
+def _check_St7_error_message(err_code: int, err_ctx=None, args=None):
+    """Function for handling the errors received from the Strand7 API"""
     if err_code == 0:
         return
 
-    message = ctypes.create_string_buffer(kMaxStrLen)
+    message = ctypes.create_string_buffer(St7.kMaxStrLen)
     St7.St7GetAPIErrorString(err_code, message, St7.kMaxStrLen)
-    if err_code in (10, 118):
-        logger.warning(f"{err_code}: {message.value.decode()}")
+    if err_code in (St7.ERR7_DataNotFound, St7.ERR7_ResultIsNotAvailable, St7.ERR7_ResultQuantityNotAvailable):
+        if err_ctx:
+            err_ctx.warning_count += 1
+            err_ctx.warning_entities.add(args)
+        if err_ctx and err_ctx.warning_count < 2:
+            logger.warning(f"{err_code}: {message.value.decode()}\n\t{args}\nSuppressing similar warnings.")
         return
-
     else:
         logger.error(f"{err_code}: {message.value.decode()}")
         raise RuntimeError(message.value.decode())
+
 
 def _clear_lists(lists_to_clear: list):
     """Convenience function for clearing lists."""
     for lst in lists_to_clear:
         lst.clear()
 
+
 def _create_parq_table(writer: pq.ParquetWriter, lists_to_process: list, schema: pa.Schema):
-    array = list(pa.array(data) for data in lists_to_process)
+    array = [pa.array(data) for data in lists_to_process]
     table = pa.Table.from_arrays(array, schema=schema)
     writer.write_table(table)
     _clear_lists(lists_to_process)
@@ -282,7 +340,7 @@ def initialize_model(model_file: pathlib.Path, result_file: pathlib.Path, scratc
             St7.St7Release()
         except Exception as e:
             logger.error(e)
-            raise RuntimeError("Failed to close Strand7 model and results.")
+            raise RuntimeError("Failed to close Strand7 model and family_results.")
         raise ValueError(f"A value error occurred. Likely to be caused by the file names used.") from ve
 
     except Exception as e:
@@ -293,8 +351,8 @@ def initialize_model(model_file: pathlib.Path, result_file: pathlib.Path, scratc
             St7.St7Release()
         except Exception as e:
             logger.error(e)
-            raise RuntimeError("Failed to close Strand7 model and results.")
-        raise RuntimeError("Failed to initialize Strand7 model and results.") from e
+            raise RuntimeError("Failed to close Strand7 model and family_results.")
+        raise RuntimeError("Failed to initialize Strand7 model and family_results.") from e
 
 
 # Function to extract nodal reactions
@@ -302,6 +360,7 @@ def extract_nodal_reactions(mctx: ModelExtractionContext, pfs: ParquetSettings):
 
     nNodes = ctypes.c_int(0)
     _check_St7_error_message(St7.St7GetTotal(mctx.uID, St7.tyNODE, ctypes.byref(nNodes)))
+    error_context = ErrorContext("extract_nodal_reactions")
 
     number_of_cases = mctx.primary_combo_count.value + mctx.secondary_combo_count.value
     for case_number in range(1, number_of_cases + 1):
@@ -309,7 +368,7 @@ def extract_nodal_reactions(mctx: ModelExtractionContext, pfs: ParquetSettings):
         case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
         _check_St7_error_message(St7.St7GetResultCaseName(mctx.uID, case_number, case_name, St7.kMaxStrLen))
 
-        case_name_string = str(case_name.value.decode())
+        case_name_string = case_name.value.decode()
         logger.info(f"Extracting node reactions for result case {case_name_string}...")
 
         reaction_array = ctypes.c_double * 6
@@ -317,7 +376,10 @@ def extract_nodal_reactions(mctx: ModelExtractionContext, pfs: ParquetSettings):
 
         for node in range(1, nNodes.value + 1):
 
-            _check_St7_error_message(St7.St7GetNodeResult(mctx.uID, St7.rtNodeReact, node, case_number, reactions))
+            # Need a method for returning a zeroed array if the called function returns zero reaction
+            _check_St7_error_message(St7.St7GetNodeResult(mctx.uID, St7.rtNodeReact, node, case_number, reactions),
+                                     error_context,
+                                     args=("NodeReaction", node, case_name.value.decode()))
             result_id = f"{node}-{case_number}"
             fx = float(reactions[0])
             fy = float(reactions[1])
@@ -331,6 +393,7 @@ def extract_nodal_reactions(mctx: ModelExtractionContext, pfs: ParquetSettings):
             yield result
 
     logger.info("Nodal reactions written to DB.")
+    error_context.log_errors(logger)
 
 
 # Function to extract nodal displacements
@@ -338,6 +401,7 @@ def extract_nodal_displacements(mctx: ModelExtractionContext, pfs: ParquetSettin
 
     nNodes = ctypes.c_int(0)
     _check_St7_error_message(St7.St7GetTotal(mctx.uID, St7.tyNODE, ctypes.byref(nNodes)))
+    error_context = ErrorContext("extract_nodal_displacements")
 
     number_of_cases = mctx.primary_combo_count.value + mctx.secondary_combo_count.value
     for case_number in range(1, number_of_cases + 1):
@@ -346,12 +410,14 @@ def extract_nodal_displacements(mctx: ModelExtractionContext, pfs: ParquetSettin
         _check_St7_error_message(St7.St7GetResultCaseName(mctx.uID, case_number, case_name, St7.kMaxStrLen))
         logger.info(f"Extracting node displacements for result case {case_name.value.decode()}...")
 
+        displacement_array = ctypes.c_double * 6
+        displacements = displacement_array()
+
         for node in range(1, nNodes.value + 1):
 
-            displacement_array = ctypes.c_double * 6
-            displacements = displacement_array()
-
-            _check_St7_error_message(St7.St7GetNodeResult(mctx.uID, St7.rtNodeDisp, node, case_number, displacements))
+            _check_St7_error_message(St7.St7GetNodeResult(mctx.uID, St7.rtNodeDisp, node, case_number, displacements),
+                                     error_context,
+                                     args=("NodeDisplacement", node, case_name.value.decode()))
             result_id = f"{node}-{case_number}"
             dx = displacements[0]
             dy = displacements[1]
@@ -362,6 +428,9 @@ def extract_nodal_displacements(mctx: ModelExtractionContext, pfs: ParquetSettin
 
             result = (result_id, node, case_number, case_name.value.decode(), dx, dy, dz, dxx, dyy, dzz)
             yield result
+
+    logger.info("Nodal displacements written to DB.")
+    error_context.log_errors(logger)
 
 
 # Function to extract nodal coordinates
@@ -395,6 +464,9 @@ def extract_nodal_loading(mctx: ModelExtractionContext, pfs: ParquetSettings):
 
     logger.info("Extracting nodal loading...")
 
+    node_force_array = ctypes.c_double * 3
+    node_forces = node_force_array()
+
     for node in range(1, nNodes.value + 1):
 
         node_force_count = ctypes.c_int(0)
@@ -406,8 +478,6 @@ def extract_nodal_loading(mctx: ModelExtractionContext, pfs: ParquetSettings):
         _check_St7_error_message(St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyNODE, node, St7.aoForce, node_force_count, node_force_entities))
 
         for i in range(node_force_count.value):
-            node_force_array = ctypes.c_double * 3
-            node_forces = node_force_array()
 
             load_case = node_force_entities[(4 * i) + St7.ipAttrCase]
             load_case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
@@ -528,17 +598,17 @@ def extract_beam_distributed_loading(mctx: ModelExtractionContext, pfs: ParquetS
                                                                                 id_number, ctypes.byref(dl_type),
                                                                                 dl_values))
             if dl_type.value == St7.dlConstant:
-                dl_type = "Constant"
+                dl_type = BeamLoadTypes.CONSTANT
             elif dl_type.value == St7.dlLinear:
-                dl_type = "Linear"
+                dl_type = BeamLoadTypes.LINEAR
             elif dl_type.value == St7.dlTriangular:
-                dl_type = "Triangular"
+                dl_type = BeamLoadTypes.TRIANGULAR
             elif dl_type.value == St7.dlThreePoint0:
-                dl_type = "ThreePoint0"
+                dl_type = BeamLoadTypes.THREE_POINT_0
             elif dl_type.value == St7.dlThreePoint1:
-                dl_type = "ThreePoint1"
+                dl_type = BeamLoadTypes.THREE_POINT_1
             elif dl_type.value == St7.dlTrapezoidal:
-                dl_type = "Trapezoidal"
+                dl_type = BeamLoadTypes.TRAPEZOIDAL
             else:
                 raise ValueError(f"Load type not recognized for beam {beam}, load case {load_case}, load id {id_number}")
 
@@ -551,45 +621,45 @@ def extract_beam_distributed_loading(mctx: ModelExtractionContext, pfs: ParquetS
             a = dl_values[4]
             b = dl_values[5]
 
-            result = (sid, "DistPrincipal", beam, load_case, load_case_name.value.decode(), axis, id_number, dl_type,
+            result = (sid, "DistPrincipal", beam, load_case, load_case_name.value.decode(), axis, id_number, dl_type.value,
                       projected, pa, pb, p1, p2, a, b)
             yield result
 
         # Rinse and repeat the exercise for the global loads
         dist_global_load_count = ctypes.c_int(0)
-        St7.St7GetEntityAttributeSequenceCount(mctx.uID, St7.tyBEAM, beam, St7.aoBeamDLG,
-                                               ctypes.byref(dist_global_load_count))
+        _check_St7_error_message(St7.St7GetEntityAttributeSequenceCount(mctx.uID, St7.tyBEAM, beam, St7.aoBeamDLG,
+                                               ctypes.byref(dist_global_load_count)))
         load_entity_array = ctypes.c_int * (dist_global_load_count.value * 4)
         load_entity_values = load_entity_array()
 
-        St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyBEAM, beam, St7.aoBeamDLG,
-                                          dist_global_load_count, load_entity_values)
+        _check_St7_error_message(St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyBEAM, beam, St7.aoBeamDLG,
+                                          dist_global_load_count, load_entity_values))
 
         for i in range(dist_global_load_count.value):
             axis = load_entity_values[(4 * i) + St7.ipAttrAxis]
             load_case = load_entity_values[(4 * i) + St7.ipAttrCase]
             load_case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
-            St7.St7GetLoadCaseName(mctx.uID, load_case, load_case_name, kMaxStrLen)
+            _check_St7_error_message(St7.St7GetLoadCaseName(mctx.uID, load_case, load_case_name, kMaxStrLen))
             id_number = load_entity_values[(4 * i) + St7.ipAttrID]
             sid = f"{beam}-DLG-{load_case}-{id_number}"
             dl_type = ctypes.c_int(0)
             dl_value_array = ctypes.c_double * 6
             dl_values = dl_value_array()
             projected = ctypes.c_int(0)
-            St7.St7GetBeamDistributedForceGlobal6ID(mctx.uID, beam, axis, load_case, id_number, ctypes.byref(projected),
-                                                    ctypes.byref(dl_type), dl_values)
+            _check_St7_error_message(St7.St7GetBeamDistributedForceGlobal6ID(mctx.uID, beam, axis, load_case, id_number, ctypes.byref(projected),
+                                                    ctypes.byref(dl_type), dl_values))
             if dl_type.value == St7.dlConstant:
-                dl_type = "Constant"
+                dl_type = BeamLoadTypes.CONSTANT
             elif dl_type.value == St7.dlLinear:
-                dl_type = "Linear"
+                dl_type = BeamLoadTypes.LINEAR
             elif dl_type.value == St7.dlTriangular:
-                dl_type = "Triangular"
+                dl_type = BeamLoadTypes.TRIANGULAR
             elif dl_type.value == St7.dlThreePoint0:
-                dl_type = "ThreePoint0"
+                dl_type = BeamLoadTypes.THREE_POINT_0
             elif dl_type.value == St7.dlThreePoint1:
-                dl_type = "ThreePoint1"
+                dl_type = BeamLoadTypes.THREE_POINT_1
             elif dl_type.value == St7.dlTrapezoidal:
-                dl_type = "Trapezoidal"
+                dl_type = BeamLoadTypes.TRAPEZOIDAL
             else:
                 raise ValueError(f"Load type not recognized for beam {beam}, load case {load_case}, load id {id_number}")
 
@@ -605,7 +675,7 @@ def extract_beam_distributed_loading(mctx: ModelExtractionContext, pfs: ParquetS
             a = dl_values[4]
             b = dl_values[5]
 
-            result = (sid, "DistGlobal", beam, load_case, load_case_name.value.decode(), axis, id_number, dl_type,
+            result = (sid, "DistGlobal", beam, load_case, load_case_name.value.decode(), axis, id_number, dl_type.value,
                       projected, pa, pb, p1, p2, a, b)
             yield result
 
@@ -643,17 +713,17 @@ def extract_beam_ns_mass_loading(mctx: ModelExtractionContext, pfs: ParquetSetti
             _check_St7_error_message(St7.St7GetBeamNSMass10ID(mctx.uID, beam, load_case, id_number, ctypes.byref(ns_mass_type), ns_masses))
 
             if ns_mass_type.value == St7.dlConstant:
-                ns_mass_type = "Constant"
+                ns_mass_type = BeamLoadTypes.CONSTANT
             elif ns_mass_type.value == St7.dlLinear:
-                ns_mass_type = "Linear"
+                ns_mass_type = BeamLoadTypes.LINEAR
             elif ns_mass_type.value == St7.dlTriangular:
-                ns_mass_type = "Triangular"
+                ns_mass_type = BeamLoadTypes.TRIANGULAR
             elif ns_mass_type.value == St7.dlThreePoint0:
-                ns_mass_type = "ThreePoint0"
+                ns_mass_type = BeamLoadTypes.THREE_POINT_0
             elif ns_mass_type.value == St7.dlThreePoint1:
-                ns_mass_type = "ThreePoint1"
+                ns_mass_type = BeamLoadTypes.THREE_POINT_1
             elif ns_mass_type.value == St7.dlTrapezoidal:
-                ns_mass_type = "Trapezoidal"
+                ns_mass_type = BeamLoadTypes.TRAPEZOIDAL
             else:
                 raise ValueError(f"Non-structural mass load type not recognized for beam {beam}, load case {load_case}, id {id_number}")
 
@@ -671,7 +741,7 @@ def extract_beam_ns_mass_loading(mctx: ModelExtractionContext, pfs: ParquetSetti
 
             sid = f"{beam}-NSM-{load_case}-{id_number}"
 
-            result = (sid, beam, load_case, load_case_name.value.decode(), id_number, ns_mass_type,
+            result = (sid, beam, load_case, load_case_name.value.decode(), id_number, ns_mass_type.value,
                       pa, pb, p1, p2, a, b, dynamic_factor, offset_vec_x, offset_vec_y, offset_vec_z)
 
             yield result
@@ -719,14 +789,14 @@ def extract_beam_point_loading(mctx: ModelExtractionContext, pfs: ParquetSetting
 
         # Global axis point loads
         point_global_load_count = ctypes.c_int(0)
-        St7.St7GetEntityAttributeSequenceCount(mctx.uID, St7.tyBEAM, beam, St7.aoBeamCFG,
-                                               ctypes.byref(point_global_load_count))
+        _check_St7_error_message(St7.St7GetEntityAttributeSequenceCount(mctx.uID, St7.tyBEAM, beam, St7.aoBeamCFG,
+                                               ctypes.byref(point_global_load_count)))
 
         load_entity_array = ctypes.c_int * (point_global_load_count.value * 4)
         load_entity_values = load_entity_array()
 
-        St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyBEAM, beam, St7.aoBeamCFG,
-                                          point_global_load_count, load_entity_values)
+        _check_St7_error_message(St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyBEAM, beam, St7.aoBeamCFG,
+                                          point_global_load_count, load_entity_values))
 
         point_load_force_array = ctypes.c_double * 4
         point_load_forces = point_load_force_array()
@@ -734,9 +804,9 @@ def extract_beam_point_loading(mctx: ModelExtractionContext, pfs: ParquetSetting
         for i in range(point_global_load_count.value):
             load_case = load_entity_values[(4 * i) + St7.ipAttrCase]
             load_case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
-            St7.St7GetLoadCaseName(mctx.uID, load_case, load_case_name, kMaxStrLen)
+            _check_St7_error_message(St7.St7GetLoadCaseName(mctx.uID, load_case, load_case_name, kMaxStrLen))
             id_number = load_entity_values[(4 * i) + St7.ipAttrID]
-            St7.St7GetBeamPointForceGlobal4ID(mctx.uID, beam, load_case, id_number, point_load_forces)
+            _check_St7_error_message(St7.St7GetBeamPointForceGlobal4ID(mctx.uID, beam, load_case, id_number, point_load_forces))
             position = point_load_forces[3]
             point_load_x = point_load_forces[0]
             point_load_y = point_load_forces[1]
@@ -749,11 +819,12 @@ def extract_beam_point_loading(mctx: ModelExtractionContext, pfs: ParquetSetting
             yield result
 
 
-# Function to extract the beam force results
+# Function to extract the beam force family_results
 def extract_beam_forces(mctx: ModelExtractionContext, pfs: ParquetSettings):
 
     nBeams = ctypes.c_int(0)
     _check_St7_error_message(St7.St7GetTotal(mctx.uID, St7.tyBEAM, ctypes.byref(nBeams)))
+    error_context = ErrorContext("extract_beam_forces")
 
     # The following ensures that the result positions are output as a ratio of the overall member length (0.0...1.0)
     _check_St7_error_message(St7.St7SetBeamResultPosMode(mctx.uID, St7.bpParam))
@@ -765,22 +836,24 @@ def extract_beam_forces(mctx: ModelExtractionContext, pfs: ParquetSettings):
         _check_St7_error_message(St7.St7GetResultCaseName(mctx.uID, case_number, case_name, St7.kMaxStrLen))
         logger.info(f"Extracting beam forces for result case {case_name.value.decode()}...")
 
+        force_array = ctypes.c_double * (len(pfs.position_values) * St7.kMaxBeamResult)
+        forces = force_array()
+
+        # Station positions along the element for querying loads
+        position_values_c = [ctypes.c_double(p) for p in pfs.position_values]
+        pos_array = ctypes.c_double * len(position_values_c)
+        positions = pos_array(*position_values_c)
+
         for beam in range(1, nBeams.value + 1):
 
             # Number of result columns (i.e. fields)
             number_columns = ctypes.c_int(0)
 
-            force_array = ctypes.c_double * (len(pfs.position_values) * St7.kMaxBeamResult)
-            forces = force_array()
-
-            # Station positions along the element for querying loads
-            position_values_c = [ctypes.c_double(p) for p in pfs.position_values]
-            pos_array = ctypes.c_double * len(position_values_c)
-            positions = pos_array(*position_values_c)
-
-            # Get the beam results using the Strand API
+            # Get the beam family_results using the Strand API
             _check_St7_error_message(St7.St7GetBeamResultArrayPos(mctx.uID, St7.rtBeamForce, St7.stBeamPrincipal, beam, case_number,
-                                         len(pfs.position_values), positions, ctypes.byref(number_columns), forces))
+                                         len(pfs.position_values), positions, ctypes.byref(number_columns), forces),
+                                     error_context,
+                                     args=("BeamForce", beam, case_name.value.decode()))
 
             # Access the forces from each beam at each station position, and add these to the result list
             for i in range(len(pfs.position_values)):
@@ -795,11 +868,15 @@ def extract_beam_forces(mctx: ModelExtractionContext, pfs: ParquetSettings):
                 result = (sid, beam, case_number, case_name.value.decode(), float(position), fx, fy, fz, mx, my, mz)
                 yield result
 
+    logger.info("Beam forces written to DB.")
+    error_context.log_errors(logger)
 
-# Function to extract the beam displacement results
+
+# Function to extract the beam displacement family_results
 def extract_beam_displacements(mctx: ModelExtractionContext, pfs: ParquetSettings):
     nBeams = ctypes.c_int(0)
     _check_St7_error_message(St7.St7GetTotal(mctx.uID, St7.tyBEAM, ctypes.byref(nBeams)))
+    error_context = ErrorContext("extract_beam_displacements")
 
     # The following ensures that the result positions are output as a ratio of the overall member length (0.0...1.0)
     _check_St7_error_message(St7.St7SetBeamResultPosMode(mctx.uID, St7.bpParam))
@@ -811,22 +888,24 @@ def extract_beam_displacements(mctx: ModelExtractionContext, pfs: ParquetSetting
         _check_St7_error_message(St7.St7GetResultCaseName(mctx.uID, case_number, case_name, St7.kMaxStrLen))
         logger.info(f"Extracting beam displacements for result case {case_name.value.decode()}...")
 
+        disp_array = ctypes.c_double * (len(pfs.position_values) * St7.kMaxBeamResult)
+        displacements = disp_array()
+
+        # Station positions along the element for querying loads
+        position_values_c = [ctypes.c_double(p) for p in pfs.position_values]
+        pos_array = ctypes.c_double * len(position_values_c)
+        positions = pos_array(*position_values_c)
+
         for beam in range(1, nBeams.value + 1):
 
             # Number of result columns (i.e. fields)
             number_columns = ctypes.c_int(0)
 
-            disp_array = ctypes.c_double * (len(pfs.position_values) * St7.kMaxBeamResult)
-            displacements = disp_array()
-
-            # Station positions along the element for querying loads
-            position_values_c = [ctypes.c_double(p) for p in pfs.position_values]
-            pos_array = ctypes.c_double * len(position_values_c)
-            positions = pos_array(*position_values_c)
-
-            # Get the beam results using the Strand API
+            # Get the beam family_results using the Strand API
             _check_St7_error_message(St7.St7GetBeamResultArrayPos(mctx.uID, St7.rtBeamDisp, St7.stBeamGlobal, beam, case_number,
-                                         len(pfs.position_values), positions, ctypes.byref(number_columns), displacements))
+                                         len(pfs.position_values), positions, ctypes.byref(number_columns), displacements),
+                                     error_context,
+                                     args=("BeamDisplacement", beam, case_name.value.decode()))
 
             # Access the forces from each beam at each station position, and add these to the result list
             for i in range(len(pfs.position_values)):
@@ -837,6 +916,9 @@ def extract_beam_displacements(mctx: ModelExtractionContext, pfs: ParquetSetting
                 sid = f"{beam}-{case_number}-{position:.2f}"
                 result = (sid, beam, case_number, case_name.value.decode(), position, ux, uy, uz)
                 yield result
+
+    logger.info("Beam displacements written to DB.")
+    error_context.log_errors(logger)
 
 
 # Function to extract the plate attributes and properties
@@ -941,6 +1023,7 @@ def extract_plate_loading(mctx: ModelExtractionContext, pfs: ParquetSettings):
         _check_St7_error_message(St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyPLATE, plate, St7.aoPlateFacePressure,
                                           plate_normal_load_count, load_entity_values))
 
+
         for i in range(plate_normal_load_count.value):
 
             load_case = load_entity_values[(4 * i) + St7.ipAttrCase]
@@ -963,6 +1046,7 @@ def extract_plate_loading(mctx: ModelExtractionContext, pfs: ParquetSettings):
             yield result
 
         plate_global_load_count = ctypes.c_int(0)
+
         _check_St7_error_message(St7.St7GetEntityAttributeSequenceCount(mctx.uID, St7.tyPLATE, plate,
                                                                         St7.aoPlateGlobalPressure,
                                                                         ctypes.byref(plate_global_load_count)))
@@ -973,6 +1057,7 @@ def extract_plate_loading(mctx: ModelExtractionContext, pfs: ParquetSettings):
         _check_St7_error_message(
             St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyPLATE, plate, St7.aoPlateGlobalPressure,
                                               plate_global_load_count, load_entity_values))
+
 
         for i in range(plate_global_load_count.value):
 
@@ -1022,6 +1107,7 @@ def extract_plate_loading(mctx: ModelExtractionContext, pfs: ParquetSettings):
                                                                         St7.aoPlateFaceShear,
                                                                         ctypes.byref(plate_shear_load_count)))
 
+
         load_entity_array = ctypes.c_int * (plate_shear_load_count.value * 4)
         load_entity_values = load_entity_array()
 
@@ -1029,14 +1115,15 @@ def extract_plate_loading(mctx: ModelExtractionContext, pfs: ParquetSettings):
             St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyPLATE, plate, St7.aoPlateFaceShear,
                                               plate_shear_load_count, load_entity_values))
 
+        shear_stress_array = ctypes.c_double * 2
+        shear_stresses = shear_stress_array()
+
         for i in range(plate_shear_load_count.value):
             load_case = load_entity_values[(4 * i) + St7.ipAttrCase]
             load_case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
             _check_St7_error_message(St7.St7GetLoadCaseName(mctx.uID, load_case, load_case_name, kMaxStrLen))
 
             # Get the plate shear loading
-            shear_stress_array = ctypes.c_double * 2
-            shear_stresses = shear_stress_array()
             _check_St7_error_message(St7.St7GetPlateShear2(mctx.uID, plate, load_case, shear_stresses))
             shear_stress_x = shear_stresses[0]
             shear_stress_y = shear_stresses[1]
@@ -1069,12 +1156,10 @@ def extract_plate_non_structural_mass(mctx: ModelExtractionContext, pfs: Parquet
         _check_St7_error_message(St7.St7GetEntityAttributeSequence(mctx.uID, St7.tyPLATE, plate, St7.aoPlateNSMass,
                                           plate_mass_load_count, load_entity_values))
 
-
+        plate_ns_mass_array = ctypes.c_double * 6
+        plate_ns_masses = plate_ns_mass_array()
 
         for i in range(plate_mass_load_count.value):
-
-            plate_ns_mass_array = ctypes.c_double * 6
-            plate_ns_masses = plate_ns_mass_array()
 
             load_case = load_entity_values[(4 * i) + St7.ipAttrCase]
             load_case_name = ctypes.create_string_buffer(St7.kMaxStrLen)
@@ -1089,24 +1174,24 @@ def extract_plate_non_structural_mass(mctx: ModelExtractionContext, pfs: Parquet
             offset_vec_y = plate_ns_masses[3]
             offset_vec_z = plate_ns_masses[4]
 
-            sid = f"{plate}-NSM-{load_case}"
+            sid = f"{id_number}-{plate}-NSM-{load_case}"
 
-            result = (plate, load_case, load_case_name.value.decode(), ns_mass, dynamic_factor, offset_vec_x, offset_vec_y, offset_vec_z)
+            result = (sid, plate, load_case, load_case_name.value.decode(), ns_mass, dynamic_factor, offset_vec_x, offset_vec_y, offset_vec_z)
 
             yield result
 
 
-# Function to extract the plate local stress results
+# Function to extract the plate local stress family_results
 def extract_plate_local_stresses(mctx: ModelExtractionContext, pfs: ParquetSettings):
     pass
 
 
-# Function to extract the plate combined stress results
+# Function to extract the plate combined stress family_results
 def extract_plate_combined_stresses(mctx: ModelExtractionContext, pfs: ParquetSettings):
     pass
 
 
-# Main function for extracting results
+# Main function for extracting family_results
 def extract_model_data(model_file: pathlib.Path, result_file: pathlib.Path, scratch_path: pathlib.Path,
                        directory: pathlib.Path, output_options=None):
 
@@ -1130,7 +1215,7 @@ def extract_model_data(model_file: pathlib.Path, result_file: pathlib.Path, scra
 
     else:
         for rt in ResultType:
-            if output_options[rt.label]:
+            if output_options[rt.label] == "TRUE":
                 parquet_insert(model_context, rt)
 
     # Close the Strand7 model
@@ -1211,46 +1296,26 @@ class ResultType(Enum):
     def label(self):
         return self.value.label
 
-    @label.setter
-    def label(self, v):
-        self.value.label = v
-
     @property
     def file_name(self):
         return self.value.file_name
-
-    @file_name.setter
-    def file_name(self, v):
-        self.value.file_name = v
 
     @property
     def schema(self):
         return self.value.schema
 
-    @schema.setter
-    def schema(self, v):
-        self.value.schema = v
-
     @property
     def extractor(self):
         return self.value.extractor
-
-    @extractor.setter
-    def extractor(self, v):
-        self.value.extractor = v
 
     @property
     def position_values(self):
         return self.value.position_values
 
-    @position_values.setter
-    def position_values(self, v):
-        self.value.position_values = v
 
-
-# Generic function for inserting the results of the extraction into parquet files
-def parquet_insert(mctx: ModelExtractionContext, rt: ResultType):
-    """Generic function to write the results from the extraction processes to the parquet files"""
+# Generic function for inserting the family_results of the extraction into parquet files
+def parquet_insert(mctx: ModelExtractionContext, rt: ResultType, batch_size: int=50_000):
+    """Generic function to write the family_results from the extraction processes to the parquet files"""
 
     counter = 0
 
@@ -1263,7 +1328,7 @@ def parquet_insert(mctx: ModelExtractionContext, rt: ResultType):
                 result_lists[i].append(v)
             counter += 1
 
-            if counter % 50_000 == 0:
+            if counter % batch_size == 0:
                 if result_lists:
                     _create_parq_table(writer, result_lists, rt.schema)
 
@@ -1273,7 +1338,7 @@ def parquet_insert(mctx: ModelExtractionContext, rt: ResultType):
 
 if __name__ == '__main__':
 
-    # Create scratch path if not exists
+    # Create scratch path if it doesn't exist
     scratch_folder = pathlib.Path(f"C:\\Users\\{getuser()}\\Documents\\Changi T5_Database_Scratch")
     scratch_folder.mkdir(parents=True, exist_ok=True)
 
@@ -1282,10 +1347,14 @@ if __name__ == '__main__':
 
     # Collect the input file paths
     model_file = pathlib.Path(filedialog.askopenfilename(title="Select your Strand7 model file"))
-    result_file = pathlib.Path(filedialog.askopenfilename(title="Select your Strand7 results file"))
+    result_file = pathlib.Path(filedialog.askopenfilename(title="Select your Strand7 family_results file"))
 
     # Determine the output database format and collect corresponding inputs
     directory = pathlib.Path(filedialog.askdirectory(title="Select the directory for your parquet files"))
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    log_file_path = directory / f"{timestamp} Extraction Log File.txt"
+    setup_logging(log_file_path)
 
     extract_model_data(model_file, result_file, scratch_path=scratch_folder, directory=directory)
 
